@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PW Monitor — Prevailing Wage Intelligence</title>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+
+<style>
+  /* ── Reset & Base ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #ffffff;
+    --bg2: #f5f5f4;
+    --bg3: #efefed;
+    --text: #1a1a18;
+    --text2: #6b6b67;
+    --text3: #9b9b96;
+    --border: rgba(0,0,0,0.10);
+    --border2: rgba(0,0,0,0.18);
+    --info-bg: #e6f1fb; --info-text: #185fa5; --info-border: rgba(24,95,165,0.3);
+    --success-bg: #eaf3de; --success-text: #3b6d11; --success-border: rgba(59,109,17,0.3);
+    --warn-bg: #faeeda; --warn-text: #854f0b; --warn-border: rgba(133,79,11,0.3);
+    --danger-bg: #fcebeb; --danger-text: #a32d2d; --danger-border: rgba(163,45,45,0.3);
+    --local-bg: #e1f5ee; --local-text: #0f6e56; --local-border: rgba(15,110,86,0.3);
+    --radius: 8px; --radius-lg: 12px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --mono: 'Courier New', Courier, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1a; --bg2: #252523; --bg3: #2e2e2b;
+      --text: #e8e8e2; --text2: #9b9b96; --text3: #6b6b67;
+      --border: rgba(255,255,255,0.08); --border2: rgba(255,255,255,0.15);
+      --info-bg: #042c53; --info-text: #85b7eb;
+      --success-bg: #173404; --success-text: #97c459;
+      --warn-bg: #412402; --warn-text: #ef9f27;
+      --danger-bg: #501313; --danger-text: #f09595;
+      --local-bg: #04342c; --local-text: #5dcaa5;
+    }
+  }
+  body { font-family: var(--font); background: var(--bg3); color: var(--text); font-size: 14px; line-height: 1.5; min-height: 100vh; }
+
+  /* ── Layout ── */
+  .app { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+  .sidebar { background: var(--bg); border-right: 0.5px solid var(--border); padding: 0; display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  .main { padding: 1.75rem; overflow: auto; }
+
+  /* ── Sidebar ── */
+  .sidebar-logo { padding: 1rem 1rem 1.1rem; border-bottom: 0.5px solid var(--border); }
+  .logo-text { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 7px; }
+  .logo-icon { width: 26px; height: 26px; background: var(--info-bg); color: var(--info-text); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+  .logo-sub { font-size: 11px; color: var(--text3); margin-top: 3px; }
+  .nav-section { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text3); padding: 0.85rem 1rem 0.3rem; }
+  .nav-item { display: flex; align-items: center; gap: 8px; padding: 7px 1rem; cursor: pointer; font-size: 13px; color: var(--text2); transition: background 0.12s, color 0.12s; }
+  .nav-item:hover { background: var(--bg2); color: var(--text); }
+  .nav-item.active { background: var(--info-bg); color: var(--info-text); font-weight: 500; }
+  .nav-icon { font-size: 15px; width: 18px; text-align: center; }
+  .nav-badge { margin-left: auto; font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 10px; }
+  .nb-red { background: var(--danger-bg); color: var(--danger-text); }
+  .nb-amber { background: var(--warn-bg); color: var(--warn-text); }
+  .sidebar-footer { margin-top: auto; padding: 0.875rem 1rem; border-top: 0.5px solid var(--border); font-size: 11px; }
+  .jur-wrap { display: flex; flex-wrap: wrap; gap: 3px; margin: 5px 0; }
+  .jur-chip { font-size: 10px; padding: 2px 6px; border-radius: 10px; border: 0.5px solid var(--border); background: var(--bg2); color: var(--text2); }
+  .jur-chip.local { background: var(--local-bg); color: var(--local-text); border-color: var(--local-border); }
+
+  /* ── Pages ── */
+  .page { display: none; }
+  .page.active { display: block; }
+  .page-title { font-size: 20px; font-weight: 600; margin-bottom: 3px; }
+  .page-sub { font-size: 13px; color: var(--text2); margin-bottom: 1.25rem; }
+
+  /* ── Connection Banner ── */
+  #conn-banner { display: none; padding: 8px 1rem; font-size: 12px; text-align: center; }
+  #conn-banner.connecting { background: var(--warn-bg); color: var(--warn-text); }
+  #conn-banner.error { background: var(--danger-bg); color: var(--danger-text); }
+  #conn-banner.ok { background: var(--success-bg); color: var(--success-text); display: none !important; }
+
+  /* ── Config Screen ── */
+  #page-config { max-width: 520px; margin: 3rem auto; }
+  .config-card { background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius-lg); padding: 1.75rem; }
+  .config-title { font-size: 17px; font-weight: 600; margin-bottom: 4px; }
+  .config-sub { font-size: 13px; color: var(--text2); margin-bottom: 1.25rem; line-height: 1.6; }
+  .field-label { font-size: 12px; font-weight: 500; color: var(--text2); margin-bottom: 4px; margin-top: 12px; }
+  input[type="text"], textarea, select { width: 100%; background: var(--bg2); border: 0.5px solid var(--border2); border-radius: var(--radius); color: var(--text); font-family: var(--font); font-size: 13px; padding: 8px 10px; outline: none; transition: border-color 0.15s; }
+  input[type="text"]:focus, textarea:focus { border-color: var(--info-text); }
+  .config-hint { font-size: 11px; color: var(--text3); margin-top: 4px; font-family: var(--mono); word-break: break-all; }
+
+  /* ── Metrics ── */
+  .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 1.25rem; }
+  .metric { background: var(--bg2); border-radius: var(--radius); padding: 0.9rem 1rem; }
+  .metric-label { font-size: 12px; color: var(--text2); margin-bottom: 4px; }
+  .metric-value { font-size: 24px; font-weight: 600; }
+  .metric-sub { font-size: 11px; color: var(--text3); margin-top: 2px; }
+
+  /* ── Cards ── */
+  .card { background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius-lg); padding: 1rem 1.25rem; margin-bottom: 10px; }
+  .card-title { font-size: 13px; font-weight: 600; margin-bottom: 0.875rem; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+  /* ── Change Items ── */
+  .change-item { border: 0.5px solid var(--border); border-radius: var(--radius); padding: 0.875rem; margin-bottom: 8px; transition: border-color 0.15s; }
+  .change-item:hover { border-color: var(--border2); }
+  .change-header { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+  .change-title { font-size: 13px; font-weight: 500; flex: 1; min-width: 0; }
+  .change-summary { font-size: 13px; color: var(--text2); margin-top: 5px; }
+
+  /* ── Badges ── */
+  .badge { font-size: 11px; font-weight: 500; padding: 2px 7px; border-radius: 4px; white-space: nowrap; }
+  .b-state { background: var(--bg2); color: var(--text2); }
+  .b-local { background: var(--local-bg); color: var(--local-text); }
+  .b-type { background: var(--bg2); color: var(--text2); }
+  .b-high { background: var(--danger-bg); color: var(--danger-text); }
+  .b-medium { background: var(--warn-bg); color: var(--warn-text); }
+  .b-low { background: var(--success-bg); color: var(--success-text); }
+  .b-info { background: var(--info-bg); color: var(--info-text); }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+  .dot-approved { background: #639922; }
+  .dot-dismissed { background: #e24b4a; }
+  .dot-pending { background: #ef9f27; }
+
+  /* ── Buttons ── */
+  .btn { display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; border-radius: var(--radius); border: 0.5px solid var(--border2); background: transparent; color: var(--text); font-size: 13px; cursor: pointer; font-family: var(--font); transition: background 0.12s; }
+  .btn:hover { background: var(--bg2); }
+  .btn-primary { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
+  .btn-approve { background: var(--success-bg); color: var(--success-text); border-color: var(--success-border); }
+  .btn-dismiss { color: var(--danger-text); border-color: var(--danger-border); }
+  .btn-dismiss:hover { background: var(--danger-bg); }
+  .btn-save { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); width: 100%; justify-content: center; padding: 9px; font-size: 14px; font-weight: 500; margin-top: 16px; }
+
+  /* ── Action Bar ── */
+  .action-bar { display: flex; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 0.5px solid var(--border); flex-wrap: wrap; align-items: center; }
+
+  /* ── Detail Panel ── */
+  .detail-panel { background: var(--bg2); border-radius: var(--radius); padding: 1rem; margin-top: 10px; font-size: 13px; }
+  .detail-label { font-size: 11px; color: var(--text3); margin-bottom: 2px; }
+  .detail-val { color: var(--text); margin-bottom: 10px; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  /* ── Impact Selector ── */
+  .impact-select { display: flex; gap: 6px; margin-top: 4px; }
+  .impact-opt { padding: 4px 12px; border-radius: 4px; border: 0.5px solid var(--border2); font-size: 12px; cursor: pointer; background: transparent; color: var(--text2); font-family: var(--font); transition: background 0.1s; }
+  .impact-opt:hover { background: var(--bg); }
+  .io-high { background: var(--danger-bg) !important; color: var(--danger-text) !important; border-color: transparent !important; }
+  .io-medium { background: var(--warn-bg) !important; color: var(--warn-text) !important; border-color: transparent !important; }
+  .io-low { background: var(--success-bg) !important; color: var(--success-text) !important; border-color: transparent !important; }
+
+  /* ── Filter Row ── */
+  .filter-row { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .filter-row input, .filter-row select { height: 34px; flex-shrink: 0; }
+  .filter-row input { flex: 1; min-width: 180px; }
+  .search-hits { font-size: 12px; color: var(--text3); margin-bottom: 8px; }
+
+  /* ── Digest ── */
+  .digest-item { padding: 0.875rem 0; border-bottom: 0.5px solid var(--border); }
+  .digest-item:last-child { border-bottom: none; }
+
+  /* ── Activity ── */
+  .activity-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 0.5px solid var(--border); font-size: 13px; }
+  .activity-row:last-child { border-bottom: none; }
+  .act-icon { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 15px; }
+  .act-approve { background: var(--success-bg); color: var(--success-text); }
+  .act-flag { background: var(--warn-bg); color: var(--warn-text); }
+  .act-dismiss { background: var(--danger-bg); color: var(--danger-text); }
+
+  /* ── Watchlist ── */
+  .watch-card { border: 0.5px solid var(--border); border-radius: var(--radius); padding: 0.875rem; margin-bottom: 8px; }
+  .watch-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; margin-top: 10px; }
+  .watch-stat { background: var(--bg2); border-radius: 5px; padding: 7px 9px; font-size: 12px; }
+  .watch-stat-label { color: var(--text3); margin-bottom: 2px; font-size: 11px; }
+  .r-high { background: var(--danger-bg); color: var(--danger-text); }
+  .r-medium { background: var(--warn-bg); color: var(--warn-text); }
+  .r-low { background: var(--success-bg); color: var(--success-text); }
+
+  /* ── State Bars ── */
+  .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .bar-label { width: 68px; font-size: 11px; font-weight: 500; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-track { flex: 1; height: 14px; background: var(--bg2); border-radius: 4px; overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--info-bg); border-radius: 4px; }
+  .bar-count { font-size: 12px; color: var(--text3); width: 14px; }
+
+  /* ── Empty / Loading ── */
+  .empty-state { text-align: center; padding: 2.5rem; color: var(--text3); font-size: 13px; }
+  .loading { text-align: center; padding: 2rem; color: var(--text3); font-size: 13px; }
+  .dismissed-item { opacity: 0.6; }
+
+  /* ── Textarea ── */
+  textarea { resize: vertical; min-height: 60px; }
+
+  /* ── Links ── */
+  a { color: var(--info-text); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ── Warn banner ── */
+  .warn-banner { background: var(--warn-bg); color: var(--warn-text); border-radius: var(--radius); padding: 10px 12px; font-size: 13px; display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+
+  /* ── Reviewer Picker ── */
+  .reviewer-bar { display: flex; align-items: center; gap: 8px; padding: 8px 1rem; background: var(--bg2); border-bottom: 0.5px solid var(--border); font-size: 13px; }
+  .reviewer-bar select { width: auto; }
+
+  /* ── Responsive ── */
+  @media (max-width: 700px) {
+    .app { grid-template-columns: 1fr; }
+    .sidebar { position: static; height: auto; flex-direction: row; flex-wrap: wrap; }
+    .metrics { grid-template-columns: repeat(2, 1fr); }
+    .two-col, .watch-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Connection Banner -->
+<div id="conn-banner">Connecting to database...</div>
+
+<!-- Reviewer Picker -->
+<div class="reviewer-bar" id="reviewer-bar" style="display:none">
+  <span style="color:var(--text2)">Reviewing as:</span>
+  <select id="reviewer-select" onchange="setReviewer(this.value)">
+    <option value="">Select your name</option>
+    <option>D. Bhamburkar</option>
+    <option>U. Quraishi</option>
+    <option>T. Shaikh</option>
+  </select>
+  <span style="margin-left:auto;font-size:12px;color:var(--text3)" id="last-sync">Syncing...</span>
+</div>
+
+<div class="app" id="main-app" style="display:none">
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-text"><div class="logo-icon">⚖</div> PW Monitor</div>
+      <div class="logo-sub">Prevailing Wage Intelligence</div>
+    </div>
+    <div class="nav-section">Workspace</div>
+    <div class="nav-item active" onclick="nav('dashboard',this)"><span class="nav-icon">▦</span> Dashboard</div>
+    <div class="nav-item" onclick="nav('queue',this)"><span class="nav-icon">⊞</span> Review Queue <span class="nav-badge nb-red" id="queue-count">0</span></div>
+    <div class="nav-section">Records</div>
+    <div class="nav-item" onclick="nav('archive',this)"><span class="nav-icon">◫</span> Archive</div>
+    <div class="nav-item" onclick="nav('digest',this)"><span class="nav-icon">✉</span> Weekly Digest</div>
+    <div class="nav-section">Expansion</div>
+    <div class="nav-item" onclick="nav('watchlist',this)"><span class="nav-icon">◎</span> Watch List <span class="nav-badge nb-amber">7</span></div>
+    <div class="sidebar-footer">
+      <div style="font-size:11px;font-weight:600;color:var(--text3);margin-bottom:4px">Active Jurisdictions</div>
+      <div class="jur-wrap">
+        <span class="jur-chip">CA</span><span class="jur-chip">NV</span><span class="jur-chip">WA</span><span class="jur-chip">MA</span><span class="jur-chip">MN</span><span class="jur-chip">NJ</span><span class="jur-chip">NY</span><span class="jur-chip">MI</span><span class="jur-chip local">Denver, CO</span>
+      </div>
+      <div style="color:var(--text3);margin-top:6px">Last scan: Today 6:02 AM</div>
+    </div>
+  </nav>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- Dashboard -->
+    <div class="page active" id="page-dashboard">
+      <div class="page-title">Dashboard</div>
+      <div class="page-sub">Overview across 8 states + City and County of Denver</div>
+      <div class="metrics">
+        <div class="metric"><div class="metric-label">Pending Review</div><div class="metric-value" style="color:var(--warn-text)" id="m-pending">—</div><div class="metric-sub">Needs action</div></div>
+        <div class="metric"><div class="metric-label">Approved (30d)</div><div class="metric-value" style="color:var(--success-text)" id="m-approved">—</div><div class="metric-sub">Published to digest</div></div>
+        <div class="metric"><div class="metric-label">Dismissed (30d)</div><div class="metric-value" id="m-dismissed">—</div><div class="metric-sub">Archived with rationale</div></div>
+        <div class="metric"><div class="metric-label">Jurisdictions</div><div class="metric-value">9</div><div class="metric-sub">+ 7 on watch list</div></div>
+      </div>
+      <div class="two-col">
+        <div class="card">
+          <div class="card-title">Recent Activity</div>
+          <div id="dash-activity"><div class="loading">Loading...</div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Activity by Jurisdiction (all time)</div>
+          <div id="state-bars"><div class="loading">Loading...</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Pending Items <span style="font-size:12px;font-weight:400;color:var(--text2)">Requires review before publishing</span></div>
+        <div id="dash-pending"><div class="loading">Loading...</div></div>
+        <div style="text-align:right;margin-top:8px">
+          <button class="btn btn-primary" onclick="nav('queue',document.querySelectorAll('.nav-item')[1])">→ Go to Review Queue</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Queue -->
+    <div class="page" id="page-queue">
+      <div class="page-title">Review Queue</div>
+      <div class="page-sub">Human review required before any change is published</div>
+      <div id="queue-list"><div class="loading">Loading...</div></div>
+      <div class="empty-state" id="queue-empty" style="display:none">✓ All items reviewed. Queue is clear.</div>
+    </div>
+
+    <!-- Archive -->
+    <div class="page" id="page-archive">
+      <div class="page-title">Archive</div>
+      <div class="page-sub">Full history of approved and dismissed changes</div>
+      <div class="filter-row">
+        <input type="text" id="search-input" placeholder="Search changes..." oninput="filterArchive()">
+        <select id="filter-state" onchange="filterArchive()">
+          <option value="">All jurisdictions</option>
+          <option>CA</option><option>NV</option><option>WA</option><option>MA</option>
+          <option>MN</option><option>NJ</option><option>NY</option><option>MI</option>
+          <option>Denver, CO</option>
+        </select>
+        <select id="filter-impact" onchange="filterArchive()">
+          <option value="">All impact</option><option>High</option><option>Medium</option><option>Low</option>
+        </select>
+        <select id="filter-status" onchange="filterArchive()">
+          <option value="">All status</option><option>approved</option><option>dismissed</option>
+        </select>
+      </div>
+      <div class="search-hits" id="archive-hits"></div>
+      <div id="archive-list"><div class="loading">Loading...</div></div>
+    </div>
+
+    <!-- Digest -->
+    <div class="page" id="page-digest">
+      <div class="page-title">Weekly Digest</div>
+      <div class="page-sub">Auto-generated from all approved changes. Sent every Monday.</div>
+      <div style="display:flex;gap:8px;margin-bottom:1.25rem">
+        <button class="btn btn-primary" onclick="alert('Email digest feature coming soon.')">✉ Send Digest Now</button>
+        <button class="btn" onclick="window.print()">↓ Print / Export</button>
+      </div>
+      <div class="card">
+        <div style="font-size:13px;font-weight:500;color:var(--text2);margin-bottom:0.875rem;padding-bottom:0.75rem;border-bottom:0.5px solid var(--border)">
+          Prevailing Wage Monitor — Weekly Digest
+        </div>
+        <div id="digest-list"><div class="loading">Loading...</div></div>
+      </div>
+    </div>
+
+    <!-- Watchlist -->
+    <div class="page" id="page-watchlist">
+      <div class="page-title">Watch List</div>
+      <div class="page-sub">States without prevailing wage laws monitored for potential adoption</div>
+      <div class="warn-banner">⚠ When any watch-list state adopts a prevailing wage law, it automatically moves to Active Jurisdictions and enters the review queue.</div>
+      <div id="watchlist-items"></div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Config Screen (shown before Firebase is configured) -->
+<div id="page-config">
+  <div class="config-card">
+    <div class="config-title">⚖ Connect to Firebase</div>
+    <div class="config-sub">
+      Paste your Firebase project config below. All three team members need to use the same config so data stays in sync. You can find this in Firebase Console → Project Settings → Your apps → SDK setup and configuration.
+    </div>
+    <div class="field-label">API Key</div>
+    <input type="text" id="cfg-apiKey" placeholder="AIzaSy...">
+    <div class="field-label">Auth Domain</div>
+    <input type="text" id="cfg-authDomain" placeholder="your-project.firebaseapp.com">
+    <div class="field-label">Database URL</div>
+    <input type="text" id="cfg-databaseURL" placeholder="https://your-project-default-rtdb.firebaseio.com">
+    <div class="config-hint">Must end in .firebaseio.com — enable Realtime Database (not Firestore) in your Firebase console.</div>
+    <div class="field-label">Project ID</div>
+    <input type="text" id="cfg-projectId" placeholder="your-project-id">
+    <button class="btn btn-save" onclick="saveConfig()">Save & Connect →</button>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────
+// CONFIG MANAGEMENT
+// ─────────────────────────────────────────
+const CFG_KEY = 'pw_firebase_cfg';
+let db = null;
+let currentReviewer = localStorage.getItem('pw_reviewer') || '';
+let localChanges = [];
+
+function saveConfig() {
+  const cfg = {
+    apiKey: document.getElementById('cfg-apiKey').value.trim(),
+    authDomain: document.getElementById('cfg-authDomain').value.trim(),
+    databaseURL: document.getElementById('cfg-databaseURL').value.trim(),
+    projectId: document.getElementById('cfg-projectId').value.trim(),
+  };
+  if (!cfg.apiKey || !cfg.databaseURL) {
+    alert('API Key and Database URL are required.');
+    return;
+  }
+  localStorage.setItem(CFG_KEY, JSON.stringify(cfg));
+  location.reload();
+}
+
+function loadConfig() {
+  const saved = localStorage.getItem(CFG_KEY);
+  return saved ? JSON.parse(saved) : null;
+}
+
+// ─────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────
+const cfg = loadConfig();
+
+if (!cfg) {
+  document.getElementById('page-config').style.display = 'block';
+} else {
+  document.getElementById('page-config').style.display = 'none';
+  document.getElementById('main-app').style.display = 'grid';
+  document.getElementById('reviewer-bar').style.display = 'flex';
+  if (currentReviewer) document.getElementById('reviewer-select').value = currentReviewer;
+
+  const banner = document.getElementById('conn-banner');
+  banner.textContent = 'Connecting to database...';
+  banner.className = 'connecting';
+  banner.style.display = 'block';
+
+  try {
+    firebase.initializeApp(cfg);
+    db = firebase.database();
+
+    db.ref('.info/connected').on('value', snap => {
+      if (snap.val()) {
+        banner.style.display = 'none';
+        document.getElementById('last-sync').textContent = 'Live ●';
+        initData();
+      } else {
+        banner.textContent = 'Reconnecting...';
+        banner.className = 'connecting';
+        banner.style.display = 'block';
+      }
+    });
+  } catch(e) {
+    banner.textContent = 'Connection failed. Check your Firebase config. ' + e.message;
+    banner.className = 'error';
+    banner.style.display = 'block';
+  }
+}
+
+function setReviewer(val) {
+  currentReviewer = val;
+  localStorage.setItem('pw_reviewer', val);
+}
+
+// ─────────────────────────────────────────
+// SEED DATA
+// ─────────────────────────────────────────
+const SEED = [
+  {state:"CA",title:"Public Works Wage Rate Update Q2 2025",category:"Rate change",impact:"High",type:"Enacted",summary:"DIR published updated base wage rates for heavy construction and building trades effective June 1, 2025. Carpenters +4.2%, Electricians +3.8% across major county groups.",source:"https://www.dir.ca.gov/oprl/pwappwage/MainPage.asp",date:"2025-05-01",effectiveDate:"2025-06-01",status:"pending",reviewer:"",notes:"",reviewed:null,isLocal:false},
+  {state:"NY",title:"NY S4021 - Expanded Coverage for Tech Infrastructure",category:"Coverage expansion",impact:"High",type:"Proposal",summary:"Senate bill proposes extending prevailing wage requirements to broadband infrastructure projects above $25M statewide. Committee hearing scheduled May 14.",source:"https://www.nysenate.gov/legislation",date:"2025-05-03",effectiveDate:"Pending",status:"pending",reviewer:"",notes:"",reviewed:null,isLocal:false},
+  {state:"MN",title:"DOLI Rulemaking: New Threshold for State-Assisted Projects",category:"Coverage contraction",impact:"Medium",type:"Proposal",summary:"Proposed rulemaking would raise the project value threshold for state-assisted coverage from $100k to $250k. Comment period closes June 10.",source:"https://www.dli.mn.gov/business/labor-relations/prevailing-wages",date:"2025-05-03",effectiveDate:"Pending",status:"pending",reviewer:"",notes:"",reviewed:null,isLocal:false},
+  {state:"WA",title:"L&I Technical Clarification: Benefit Package Calculations",category:"Administrative update",impact:"Low",type:"Enacted",summary:"L&I issued guidance clarifying how employer-paid benefits count toward prevailing wage compliance. No rate changes. Effective immediately.",source:"https://lni.wa.gov/licensing-permits/public-works-projects/prevailing-wage",date:"2025-05-04",effectiveDate:"2025-05-04",status:"pending",reviewer:"",notes:"",reviewed:null,isLocal:false},
+  {state:"Denver, CO",title:"Denver Auditor: 2025 PWA Wage Schedule Update (Mod 175)",category:"Rate change",impact:"Medium",type:"Enacted",summary:"Denver Auditor issued Modification 175 to the Prevailing Wage Administrator schedule. Reflects the citywide minimum wage increase to $18.81/hr enacted January 1, 2025. Applies to all city contracts.",source:"https://denvergov.org/Government/Agencies-Departments-Offices/Agencies-Departments-Offices-Directory/Auditors-Office/Denver-Labor/Prevailing-Wage",date:"2025-05-04",effectiveDate:"2025-01-01",status:"pending",reviewer:"",notes:"",reviewed:null,isLocal:true},
+  {state:"NJ",title:"NJ PWA Amendment: Solar Project Coverage",category:"Coverage expansion",impact:"High",type:"Enacted",summary:"Governor signed S3901 extending prevailing wage to solar energy projects receiving state incentives. Applies to contracts executed after July 1, 2025.",source:"https://www.nj.gov/labor/wagehour/content/prevailing_wage.shtml",date:"2025-04-28",effectiveDate:"2025-07-01",status:"approved",reviewer:"J. Torres",notes:"Significant. Notify solar division immediately.",reviewed:"2025-04-29",isLocal:false},
+  {state:"CA",title:"DIR FAQ Update: Apprenticeship Ratio Requirements",category:"Policy guidance",impact:"Medium",type:"Enacted",summary:"DIR updated FAQ clarifying apprenticeship ratio requirements for public works contracts. Ratios now apply per trade craft, not per contractor.",source:"https://www.dir.ca.gov/oprl/pwappwage/MainPage.asp",date:"2025-04-22",effectiveDate:"2025-04-22",status:"approved",reviewer:"R. Patel",notes:"Share with compliance team.",reviewed:"2025-04-23",isLocal:false},
+  {state:"MA",title:"EOLWD Wage Rate Schedule: Spring 2025",category:"Rate change",impact:"Medium",type:"Enacted",summary:"Updated prevailing wage schedules for Eastern and Western MA zones. Average increase of 3.1% across all craft categories.",source:"https://www.mass.gov/how-to/determine-the-prevailing-wage-rates-for-a-project",date:"2025-04-15",effectiveDate:"2025-05-01",status:"approved",reviewer:"J. Torres",notes:"",reviewed:"2025-04-16",isLocal:false},
+  {state:"WA",title:"L&I Administrative Notice: Reporting Portal Migration",category:"Administrative update",impact:"Low",type:"Enacted",summary:"L&I moving prevailing wage reporting to new online portal. Existing paper processes end August 1.",source:"https://lni.wa.gov/licensing-permits/public-works-projects/prevailing-wage",date:"2025-04-10",effectiveDate:"2025-08-01",status:"dismissed",reviewer:"R. Patel",notes:"No substantive legal change.",reviewed:"2025-04-11",isLocal:false},
+  {state:"MI",title:"LARA Proposed Rule: Apprenticeship Utilization Standards",category:"Coverage expansion",impact:"Medium",type:"Proposal",summary:"Proposed rule would require 15% apprenticeship utilization on state-funded projects over $1M. Public comment closes May 30.",source:"https://www.michigan.gov/lara",date:"2025-04-08",effectiveDate:"Pending",status:"approved",reviewer:"J. Torres",notes:"Monitor for final rule.",reviewed:"2025-04-09",isLocal:false},
+  {state:"NV",title:"NDOL Wage Survey: FY2026 Rate Determination",category:"Rate change",impact:"Medium",type:"Enacted",summary:"NDOL published preliminary FY2026 wage rate determinations. Final rates expected June 15 after appeal period.",source:"https://labor.nv.gov/Regulations/Prevailing_Wage/Prevailing_Wage/",date:"2025-04-01",effectiveDate:"2025-07-01",status:"approved",reviewer:"R. Patel",notes:"",reviewed:"2025-04-02",isLocal:false},
+  {state:"Denver, CO",title:"Denver Ordinance §20-76: Annual Compliance Audit",category:"Administrative update",impact:"Low",type:"Enacted",summary:"Denver Auditor released its annual audit findings on prevailing wage compliance. Three contractors flagged for apprenticeship ratio violations.",source:"https://denvergov.org/Government/Agencies-Departments-Offices/Agencies-Departments-Offices-Directory/Auditors-Office/Denver-Labor/Prevailing-Wage",date:"2025-03-15",effectiveDate:"2025-03-15",status:"approved",reviewer:"J. Torres",notes:"Review debarment risk for flagged contractors.",reviewed:"2025-03-16",isLocal:true},
+];
+
+const WATCHLIST = [
+  {state:"Colorado",abbr:"CO",risk:"High",reason:"State-level prevailing wage law repealed in 1985. Denver's local ordinance (§20-76) is active. Legislative push to reinstate a statewide law has gained traction in recent sessions.",bills:"HB 25-1234 (in committee)",lastActivity:"March 2025",source:"https://leg.colorado.gov",notes:"Denver already monitored. Statewide adoption would expand coverage significantly."},
+  {state:"Virginia",abbr:"VA",risk:"High",reason:"Virginia enacted a prevailing wage law in 2020 for state-funded projects. Proposals to expand coverage to locally-funded projects and lower project thresholds are active.",bills:"HB 2231, SB 1408 (2025 session)",lastActivity:"February 2025",source:"https://lis.virginia.gov",notes:"Watch for threshold reduction bills. Could affect projects currently below $500k."},
+  {state:"Arizona",abbr:"AZ",risk:"Medium",reason:"No state prevailing wage law. Labor-aligned ballot initiatives introduced in prior cycles. Competitive political environment may create opportunity in 2026.",bills:"No active bill",lastActivity:"January 2025",source:"https://azleg.gov",notes:"Monitor ballot initiative filings for 2026 cycle."},
+  {state:"Georgia",abbr:"GA",risk:"Low",reason:"No state prevailing wage law and current legislature is unlikely to act. Atlanta and other metro jurisdictions have explored local ordinances.",bills:"No active bill",lastActivity:"December 2024",source:"https://www.legis.ga.gov",notes:"Watch Atlanta City Council for local ordinance activity."},
+  {state:"Florida",abbr:"FL",risk:"Low",reason:"Florida repealed its prevailing wage law in 1979. No active state-level proposals. Follows federal Davis-Bacon on federally funded projects only.",bills:"No active bill",lastActivity:"November 2024",source:"https://www.flsenate.gov",notes:"Low probability absent major political change. Monitor federal project activity."},
+  {state:"Texas",abbr:"TX",risk:"Low",reason:"No state prevailing wage law. State preemption law limits local action. Politically unfavorable environment for near-term adoption.",bills:"No active bill",lastActivity:"October 2024",source:"https://capitol.texas.gov",notes:"Monitor federal infrastructure spending in TX; Davis-Bacon applies to those projects."},
+  {state:"North Carolina",abbr:"NC",risk:"Medium",reason:"No state prevailing wage law, but growing labor advocacy following infrastructure bill investments. Several counties have explored voluntary standards.",bills:"HB 412 (stalled)",lastActivity:"February 2025",source:"https://www.ncleg.gov",notes:"HB 412 stalled in committee. Watch for reintroduction in 2026."},
+];
+
+// ─────────────────────────────────────────
+// FIREBASE DATA
+// ─────────────────────────────────────────
+function initData() {
+  db.ref('changes').once('value').then(snap => {
+    if (!snap.exists()) {
+      // Seed the database on first run
+      const updates = {};
+      SEED.forEach((c, i) => { updates['changes/item_' + i] = c; });
+      db.ref().update(updates);
+    }
+  });
+
+  // Live listener
+  db.ref('changes').on('value', snap => {
+    localChanges = [];
+    if (snap.exists()) {
+      snap.forEach(child => {
+        localChanges.push({ _key: child.key, ...child.val() });
+      });
+    }
+    refreshAll();
+    document.getElementById('last-sync').textContent = 'Live ● ' + new Date().toLocaleTimeString();
+  });
+}
+
+function refreshAll() {
+  const page = document.querySelector('.page.active')?.id;
+  renderDashboard();
+  if (page === 'page-queue') renderQueue();
+  if (page === 'page-archive') filterArchive();
+  if (page === 'page-digest') renderDigest();
+}
+
+// ─────────────────────────────────────────
+// NAVIGATION
+// ─────────────────────────────────────────
+function nav(page, el) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+  el.classList.add('active');
+  if (page === 'queue') renderQueue();
+  if (page === 'archive') filterArchive();
+  if (page === 'digest') renderDigest();
+  if (page === 'watchlist') renderWatchlist();
+}
+
+// ─────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────
+function impactBadge(lvl) {
+  const cls = lvl === 'High' ? 'b-high' : lvl === 'Medium' ? 'b-medium' : 'b-low';
+  return `<span class="badge ${cls}">${lvl}</span>`;
+}
+
+function stateBadge(s, isLocal) {
+  const cls = isLocal ? 'badge b-local' : 'badge b-state';
+  return `<span class="${cls}">${s}</span>`;
+}
+
+function typeBadge(t) {
+  return `<span class="badge b-type">${t}</span>`;
+}
+
+function statusDot(s) {
+  const cls = s === 'approved' ? 'dot-approved' : s === 'dismissed' ? 'dot-dismissed' : 'dot-pending';
+  return `<span class="status-dot ${cls}"></span>`;
+}
+
+// ─────────────────────────────────────────
+// DASHBOARD
+// ─────────────────────────────────────────
+function renderDashboard() {
+  const pending = localChanges.filter(c => c.status === 'pending');
+  const approved = localChanges.filter(c => c.status === 'approved');
+  const dismissed = localChanges.filter(c => c.status === 'dismissed');
+  document.getElementById('m-pending').textContent = pending.length;
+  document.getElementById('m-approved').textContent = approved.length;
+  document.getElementById('m-dismissed').textContent = dismissed.length;
+  document.getElementById('queue-count').textContent = pending.length;
+
+  // Activity feed: show last 5 non-pending
+  const recent = [...localChanges].filter(c => c.status !== 'pending')
+    .sort((a,b) => (b.reviewed||'').localeCompare(a.reviewed||'')).slice(0,5);
+  document.getElementById('dash-activity').innerHTML = recent.length === 0
+    ? '<div class="empty-state">No activity yet.</div>'
+    : recent.map(c => {
+        const icon = c.status === 'approved' ? '✓' : '✗';
+        const cls = c.status === 'approved' ? 'act-approve' : 'act-dismiss';
+        return `<div class="activity-row">
+          <div class="act-icon ${cls}">${icon}</div>
+          <div><div>${c.state}: ${c.title.substring(0,50)}${c.title.length>50?'..':''}</div>
+          <div style="font-size:11px;color:var(--text3)">${c.status} by ${c.reviewer} on ${c.reviewed}</div></div>
+        </div>`;
+      }).join('');
+
+  // State bars
+  const counts = {};
+  localChanges.forEach(c => { counts[c.state] = (counts[c.state] || 0) + 1; });
+  const max = Math.max(...Object.values(counts), 1);
+  document.getElementById('state-bars').innerHTML = Object.entries(counts)
+    .sort((a,b) => b[1]-a[1])
+    .map(([s,n]) => `<div class="bar-row">
+      <div class="bar-label">${s}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${Math.round(n/max*100)}%"></div></div>
+      <div class="bar-count">${n}</div>
+    </div>`).join('');
+
+  // Pending preview
+  document.getElementById('dash-pending').innerHTML = pending.length === 0
+    ? '<div class="empty-state">No pending items.</div>'
+    : pending.map(c => `<div class="change-item">
+        <div class="change-header">${stateBadge(c.state,c.isLocal)}${impactBadge(c.impact)}${typeBadge(c.type)}<span class="change-title">${c.title}</span></div>
+        <div class="change-summary">${c.summary.substring(0,140)}...</div>
+      </div>`).join('');
+}
+
+// ─────────────────────────────────────────
+// REVIEW QUEUE
+// ─────────────────────────────────────────
+function renderQueue() {
+  const pending = localChanges.filter(c => c.status === 'pending');
+  const el = document.getElementById('queue-list');
+  const empty = document.getElementById('queue-empty');
+  if (pending.length === 0) { el.innerHTML = ''; empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+  el.innerHTML = pending.map(c => `
+    <div class="card" id="qi-${c._key}">
+      <div class="change-header" style="margin-bottom:8px">
+        ${stateBadge(c.state,c.isLocal)}${impactBadge(c.impact)}${typeBadge(c.type)}
+        <span style="margin-left:auto;font-size:12px;color:var(--text3)">${c.date}</span>
+      </div>
+      <div style="font-size:15px;font-weight:600;margin-bottom:6px">${c.title}</div>
+      <div style="font-size:13px;color:var(--text2)">${c.summary}</div>
+      <div class="detail-panel">
+        <div class="two-col">
+          <div>
+            <div class="detail-label">Category</div><div class="detail-val">${c.category}</div>
+            <div class="detail-label">Effective Date</div><div class="detail-val">${c.effectiveDate}</div>
+          </div>
+          <div>
+            <div class="detail-label">Source</div>
+            <div class="detail-val"><a href="${c.source}" target="_blank">View official source ↗</a></div>
+          </div>
+        </div>
+        <div class="detail-label" style="margin-top:6px">Set Impact Level</div>
+        <div class="impact-select" id="imp-${c._key}">
+          <button class="impact-opt ${c.impact==='High'?'io-high':''}" onclick="setImpact('${c._key}','High',this)">High</button>
+          <button class="impact-opt ${c.impact==='Medium'?'io-medium':''}" onclick="setImpact('${c._key}','Medium',this)">Medium</button>
+          <button class="impact-opt ${c.impact==='Low'?'io-low':''}" onclick="setImpact('${c._key}','Low',this)">Low</button>
+        </div>
+        <div class="detail-label" style="margin-top:10px">Internal Notes</div>
+        <textarea id="note-${c._key}" placeholder="Add commentary for the team...">${c.notes||''}</textarea>
+      </div>
+      <div class="action-bar">
+        <button class="btn btn-approve" onclick="decide('${c._key}','approved')">✓ Approve</button>
+        <button class="btn btn-dismiss" onclick="decide('${c._key}','dismissed')">✗ Dismiss</button>
+        <span style="margin-left:auto;font-size:12px;color:var(--text3)">Reviewed items move to Archive and sync to all teammates</span>
+      </div>
+    </div>`).join('');
+}
+
+function setImpact(key, level, btn) {
+  const row = document.getElementById('imp-' + key);
+  row.querySelectorAll('.impact-opt').forEach(b => b.classList.remove('io-high','io-medium','io-low'));
+  btn.classList.add('io-' + level.toLowerCase());
+  db.ref('changes/' + key).update({ impact: level });
+}
+
+function decide(key, status) {
+  if (!currentReviewer) {
+    alert('Please select your name at the top before reviewing.');
+    return;
+  }
+  const notes = document.getElementById('note-' + key)?.value || '';
+  db.ref('changes/' + key).update({
+    status,
+    notes,
+    reviewer: currentReviewer,
+    reviewed: new Date().toISOString().split('T')[0],
+  });
+}
+
+// ─────────────────────────────────────────
+// ARCHIVE
+// ─────────────────────────────────────────
+function filterArchive() {
+  const q = (document.getElementById('search-input')?.value || '').toLowerCase();
+  const st = document.getElementById('filter-state')?.value || '';
+  const imp = document.getElementById('filter-impact')?.value || '';
+  const stat = document.getElementById('filter-status')?.value || '';
+  const archived = localChanges.filter(c => c.status !== 'pending');
+  const filtered = archived.filter(c => {
+    if (st && c.state !== st) return false;
+    if (imp && c.impact !== imp) return false;
+    if (stat && c.status !== stat) return false;
+    if (q && !(c.title.toLowerCase().includes(q) || c.summary.toLowerCase().includes(q) || c.state.toLowerCase().includes(q))) return false;
+    return true;
+  });
+  document.getElementById('archive-hits').textContent = `${filtered.length} of ${archived.length} records`;
+  document.getElementById('archive-list').innerHTML = filtered.length === 0
+    ? '<div class="empty-state">No matching records.</div>'
+    : filtered.map(c => `
+      <div class="change-item ${c.status==='dismissed'?'dismissed-item':''}">
+        <div class="change-header">
+          ${stateBadge(c.state,c.isLocal)}${impactBadge(c.impact)}${typeBadge(c.type)}
+          <span style="margin-left:auto;font-size:12px;color:var(--text3)">${statusDot(c.status)}${c.status} by ${c.reviewer} on ${c.reviewed}</span>
+        </div>
+        <div style="font-size:13px;font-weight:500;margin-bottom:4px">${c.title}</div>
+        <div class="change-summary">${c.summary}</div>
+        ${c.notes?`<div style="margin-top:6px;font-size:12px;color:var(--text2);background:var(--bg2);padding:6px 8px;border-radius:5px">📝 ${c.notes}</div>`:''}
+      </div>`).join('');
+}
+
+// ─────────────────────────────────────────
+// DIGEST
+// ─────────────────────────────────────────
+function renderDigest() {
+  const approved = localChanges.filter(c => c.status === 'approved');
+  document.getElementById('digest-list').innerHTML = approved.length === 0
+    ? '<div class="empty-state">No approved changes yet. Approve items from the Review Queue to populate the digest.</div>'
+    : approved.map(c => `
+      <div class="digest-item">
+        <div style="display:flex;align-items:center;gap:7px;margin-bottom:5px;flex-wrap:wrap">
+          ${stateBadge(c.state,c.isLocal)}${impactBadge(c.impact)}<span class="badge b-type">${c.category}</span>
+          <span style="margin-left:auto;font-size:12px;color:var(--text3)">Effective: ${c.effectiveDate}</span>
+        </div>
+        <div style="font-size:13px;font-weight:600;margin-bottom:4px">${c.title}</div>
+        <div style="font-size:13px;color:var(--text2)">${c.summary}</div>
+        ${c.notes?`<div style="margin-top:5px;font-size:12px;color:var(--text2);font-style:italic">Team note: ${c.notes}</div>`:''}
+        <div style="margin-top:6px"><a href="${c.source}" target="_blank">View source ↗</a></div>
+      </div>`).join('');
+}
+
+// ─────────────────────────────────────────
+// WATCHLIST
+// ─────────────────────────────────────────
+function renderWatchlist() {
+  document.getElementById('watchlist-items').innerHTML = WATCHLIST.map(w => `
+    <div class="watch-card">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+        <span class="badge b-state" style="font-size:12px">${w.abbr} — ${w.state}</span>
+        <span class="badge r-${w.risk.toLowerCase()}">${w.risk} likelihood</span>
+        <span style="margin-left:auto;font-size:12px;color:var(--text3)">Last activity: ${w.lastActivity}</span>
+      </div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:8px">${w.reason}</div>
+      <div class="watch-grid">
+        <div class="watch-stat"><div class="watch-stat-label">Active Bills</div><div>${w.bills}</div></div>
+        <div class="watch-stat"><div class="watch-stat-label">Source</div><div><a href="${w.source}" target="_blank">${w.source.replace('https://','')}</a></div></div>
+        <div class="watch-stat"><div class="watch-stat-label">Internal Notes</div><div style="font-size:12px;color:var(--text2)">${w.notes}</div></div>
+      </div>
+    </div>`).join('');
+}
+</script>
+</body>
+</html>
