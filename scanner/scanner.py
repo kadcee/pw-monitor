@@ -1,198 +1,103 @@
 """
-PW Monitor - Automated Prevailing Wage Scanner
-Runs daily at 6:00 AM UTC via GitHub Actions.
-Compares page content hashes to detect changes.
-Pushes flagged changes to Firebase review queue for human review.
+PW Monitor - Prevailing Wage Page Scanner
+Version 2.0 | May 2026
+
+Upgrades from v1.0:
+- Stores full extracted page text in Firebase (not just a hash)
+- Computes a text diff on each run
+- Includes the diff in the Review Queue item so reviewers see exactly what changed
+- Hash is still computed and stored as a quick-change sentinel
 """
 
-import hashlib
-import json
 import os
+import hashlib
+import difflib
+import datetime
+import json
 import urllib.request
-import urllib.error
-from datetime import datetime, timezone
+import urllib.parse
+from html.parser import HTMLParser
+
 
 # ---------------------------------------------------------------------------
-# Firebase config (set in GitHub Secrets)
+# Configuration
 # ---------------------------------------------------------------------------
-FIREBASE_URL    = os.environ["FIREBASE_DATABASE_URL"].rstrip("/")
+
+FIREBASE_URL = os.environ["FIREBASE_DATABASE_URL"].rstrip("/")
 FIREBASE_SECRET = os.environ["FIREBASE_SECRET"]
 
-# ---------------------------------------------------------------------------
-# Active jurisdictions — fully monitored, changes routed to review queue
-# ---------------------------------------------------------------------------
-ACTIVE_JURISDICTIONS = [
-    {
-        "id":    "CA",
-        "state": "CA",
-        "label": "California DIR — Prevailing Wage",
-        "url":   "https://www.dir.ca.gov/Public-Works/Prevailing-Wage.html",
-    },
-    {
-        "id":    "NV",
-        "state": "NV",
-        "label": "Nevada NDOL — Public Works & Prevailing Wages",
-        "url":   "https://labor.nv.gov/PrevailingWage/Public_Works___Prevailing_Wages/",
-    },
-    {
-        "id":    "WA",
-        "state": "WA",
-        "label": "Washington L&I — Prevailing Wage Rates",
-        "url":   "https://lni.wa.gov/licensing-permits/public-works-projects/prevailing-wage-rates/",
-    },
-    {
-        "id":    "MA",
-        "state": "MA",
-        "label": "Massachusetts EOLWD — Prevailing Wage",
-        "url":   "https://www.mass.gov/prevailing-wage",
-    },
-    {
-        "id":    "MN",
-        "state": "MN",
-        "label": "Minnesota DOLI — Prevailing Wage",
-        "url":   "https://www.dli.mn.gov/prevailing-wage",
-    },
-    {
-        "id":    "NJ",
-        "state": "NJ",
-        "label": "New Jersey DOL — Prevailing Wage Rates",
-        "url":   "https://www.nj.gov/labor/wageandhour/prevailing-rates/",
-    },
-    {
-        "id":    "NY",
-        "state": "NY",
-        "label": "New York DOL — Bureau of Public Work",
-        "url":   "https://labor.ny.gov/workerprotection/publicwork/PWContents.shtm",
-    },
-    {
-        "id":    "MI",
-        "state": "MI",
-        "label": "Michigan LEO — Prevailing Wage",
-        "url":   "https://www.michigan.gov/leo/bureaus-agencies/ber/wage-and-hour/prevailing-wage",
-    },
-    {
-        "id":    "Denver-CO",
-        "state": "CO",
-        "label": "Denver Auditor — Prevailing Wage",
-        "url":   "https://denvergov.org/Government/Agencies-Departments-Offices/Agencies-Departments-Offices-Directory/Auditors-Office/Denver-Labor/Prevailing-Wage",
-    },
+JURISDICTIONS = [
+    {"id": "CA",         "label": "California (CA)",          "url": "https://www.dir.ca.gov/Public-Works/Prevailing-Wage.html"},
+    {"id": "NV",         "label": "Nevada (NV)",               "url": "https://labor.nv.gov/Employer/Prevailing_Wage_Information/"},
+    {"id": "WA",         "label": "Washington (WA)",           "url": "https://lni.wa.gov/licensing-permits/public-works-projects/prevailing-wage"},
+    {"id": "MA",         "label": "Massachusetts (MA)",        "url": "https://www.mass.gov/prevailing-wages"},
+    {"id": "MN",         "label": "Minnesota (MN)",            "url": "https://www.dli.mn.gov/business/employment-practices/prevailing-wage"},
+    {"id": "NJ",         "label": "New Jersey (NJ)",           "url": "https://www.nj.gov/labor/wageandhour/tools-resources/prevailingwage/"},
+    {"id": "NY",         "label": "New York (NY)",             "url": "https://dol.ny.gov/prevailing-wages"},
+    {"id": "MI",         "label": "Michigan (MI)",             "url": "https://www.michigan.gov/leo/bureaus-agencies/bers/prevailing-wage"},
+    {"id": "DENVER_CO",  "label": "Denver, CO (Local)",        "url": "https://denvergov.org/Government/Agencies-Departments-Offices/Agencies-Departments-Offices-Directory/Auditors-Office/Prevailing-Wage"},
 ]
 
-# ---------------------------------------------------------------------------
-# Watch-list jurisdictions — no active PW law; monitored for legislative
-# activity. Changes flagged for human review and labeled watch-list.
-# ---------------------------------------------------------------------------
-WATCH_JURISDICTIONS = [
-    # Colorado (statewide) — High likelihood; active push to expand beyond
-    # the 2021 Quality Apprenticeship Training Act
-    {
-        "id":    "CO-CDLE",
-        "state": "CO",
-        "label": "Colorado CDLE — Prevailing Wage Library",
-        "url":   "https://cdle.colorado.gov/labor-library-prevailing-wages",
-    },
-    {
-        "id":    "CO-leg",
-        "state": "CO",
-        "label": "Colorado General Assembly — Bill Search",
-        "url":   "https://leg.colorado.gov/bill-search",
-    },
-
-    # Virginia — High likelihood; prevailing wage modernization enacted
-    # April 2026 (HB 569/SB 518, effective July 1 2026). Monitor for
-    # rate publication and further expansion bills.
-    {
-        "id":    "VA-DOLI",
-        "state": "VA",
-        "label": "Virginia DOLI — Prevailing Wage",
-        "url":   "https://www.doli.virginia.gov/labor-law/prevailing-wage/",
-    },
-    {
-        "id":    "VA-LIS",
-        "state": "VA",
-        "label": "Virginia Legislative Information System",
-        "url":   "https://lis.virginia.gov/",
-    },
-
-    # North Carolina — Medium likelihood; HB 412 stalled, advocacy active
-    {
-        "id":    "NC-leg",
-        "state": "NC",
-        "label": "North Carolina General Assembly",
-        "url":   "https://www.ncleg.gov/Legislation",
-    },
-    {
-        "id":    "NC-DOL",
-        "state": "NC",
-        "label": "North Carolina DOL",
-        "url":   "https://www.nclabor.com/",
-    },
-
-    # Arizona — Medium likelihood; ballot initiative activity
-    {
-        "id":    "AZ-leg",
-        "state": "AZ",
-        "label": "Arizona Legislature",
-        "url":   "https://www.azleg.gov/bills/",
-    },
-    {
-        "id":    "AZ-ICA",
-        "state": "AZ",
-        "label": "Arizona Industrial Commission",
-        "url":   "https://www.azica.gov/",
-    },
-
-    # Georgia — Low likelihood; Atlanta exploring local ordinance
-    {
-        "id":    "GA-leg",
-        "state": "GA",
-        "label": "Georgia General Assembly",
-        "url":   "https://www.legis.ga.gov/",
-    },
-    {
-        "id":    "GA-DOL",
-        "state": "GA",
-        "label": "Georgia DOL",
-        "url":   "https://dol.georgia.gov/",
-    },
-
-    # Florida — Low likelihood; law repealed 1979, no active proposals
-    {
-        "id":    "FL-leg",
-        "state": "FL",
-        "label": "Florida Legislature",
-        "url":   "https://www.myfloridahouse.gov/",
-    },
-
-    # Texas — Low likelihood; state preemption limits local action
-    {
-        "id":    "TX-leg",
-        "state": "TX",
-        "label": "Texas Legislature",
-        "url":   "https://capitol.texas.gov/",
-    },
+WATCH_LIST = [
+    {"id": "CO_STATE",   "label": "Colorado (statewide)",      "url": "https://leg.colorado.gov/bills"},
+    {"id": "VA",         "label": "Virginia",                  "url": "https://doli.virginia.gov/"},
+    {"id": "NC",         "label": "North Carolina",            "url": "https://www.labor.nc.gov/"},
+    {"id": "AZ",         "label": "Arizona",                   "url": "https://www.azica.gov/"},
+    {"id": "GA",         "label": "Georgia",                   "url": "https://dol.georgia.gov/"},
+    {"id": "FL",         "label": "Florida",                   "url": "https://floridajobs.org/"},
+    {"id": "TX",         "label": "Texas",                     "url": "https://www.twc.texas.gov/"},
 ]
 
-# ---------------------------------------------------------------------------
-# Aggregate national sources — checked by scanner but reviewed manually.
-# These catch new state adoptions before official labor dept pages update.
-# ---------------------------------------------------------------------------
-AGGREGATE_SOURCES = [
-    {
-        "id":    "NCSL-PW",
-        "state": "NATIONAL",
-        "label": "NCSL — Prevailing Wage Laws by State",
-        "url":   "https://www.ncsl.org/labor-and-employment/prevailing-wage-laws",
-    },
-    {
-        "id":    "EPI-PW",
-        "state": "NATIONAL",
-        "label": "Economic Policy Institute — Prevailing Wage Research",
-        "url":   "https://www.epi.org/research/prevailing-wage/",
-    },
-]
 
-ALL_SOURCES = ACTIVE_JURISDICTIONS + WATCH_JURISDICTIONS + AGGREGATE_SOURCES
+# ---------------------------------------------------------------------------
+# HTML text extraction
+# ---------------------------------------------------------------------------
+
+class TextExtractor(HTMLParser):
+    """Extracts visible text from HTML, skipping scripts, styles, and nav."""
+
+    SKIP_TAGS = {"script", "style", "noscript", "nav", "footer", "header"}
+
+    def __init__(self):
+        super().__init__()
+        self._skip = 0
+        self.chunks = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() in self.SKIP_TAGS:
+            self._skip += 1
+
+    def handle_endtag(self, tag):
+        if tag.lower() in self.SKIP_TAGS:
+            self._skip = max(0, self._skip - 1)
+
+    def handle_data(self, data):
+        if self._skip == 0:
+            text = data.strip()
+            if text:
+                self.chunks.append(text)
+
+    def get_text(self):
+        return "\n".join(self.chunks)
+
+
+def extract_text(html: str) -> str:
+    parser = TextExtractor()
+    parser.feed(html)
+    return parser.get_text()
+
+
+def fetch_page(url: str) -> str:
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "PW-Monitor-Scanner/2.0 (internal compliance tool)"}
+    )
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+
+def compute_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -201,134 +106,200 @@ ALL_SOURCES = ACTIVE_JURISDICTIONS + WATCH_JURISDICTIONS + AGGREGATE_SOURCES
 
 def fb_get(path: str):
     url = f"{FIREBASE_URL}/{path}.json?auth={FIREBASE_SECRET}"
-    try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
-        raise
+    with urllib.request.urlopen(url, timeout=10) as resp:
+        return json.loads(resp.read())
 
 
 def fb_put(path: str, data):
-    url     = f"{FIREBASE_URL}/{path}.json?auth={FIREBASE_SECRET}"
-    payload = json.dumps(data).encode()
-    req     = urllib.request.Request(url, data=payload, method="PUT",
-                                     headers={"Content-Type": "application/json"})
+    url = f"{FIREBASE_URL}/{path}.json?auth={FIREBASE_SECRET}"
+    payload = json.dumps(data).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, method="PUT",
+                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as resp:
         return json.loads(resp.read())
 
 
-def fb_push(path: str, data):
-    url     = f"{FIREBASE_URL}/{path}.json?auth={FIREBASE_SECRET}"
-    payload = json.dumps(data).encode()
-    req     = urllib.request.Request(url, data=payload, method="POST",
-                                     headers={"Content-Type": "application/json"})
+def fb_post(path: str, data):
+    url = f"{FIREBASE_URL}/{path}.json?auth={FIREBASE_SECRET}"
+    payload = json.dumps(data).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, method="POST",
+                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as resp:
         return json.loads(resp.read())
 
 
 # ---------------------------------------------------------------------------
-# Core scanner
+# Diff logic
 # ---------------------------------------------------------------------------
 
-def fetch_hash(url: str) -> str | None:
+def compute_diff(old_text: str, new_text: str) -> str:
+    """
+    Returns a unified-style diff of meaningful lines only.
+    Limits output to 100 lines to keep Firebase payloads manageable.
+    """
+    old_lines = old_text.splitlines(keepends=True)
+    new_lines = new_text.splitlines(keepends=True)
+
+    diff = list(difflib.unified_diff(
+        old_lines,
+        new_lines,
+        fromfile="previous",
+        tofile="current",
+        lineterm=""
+    ))
+
+    # Filter to changed lines only (+ / - / @@ context markers)
+    changed = [l for l in diff if l.startswith(("+", "-", "@@", "---", "+++"))]
+
+    if not changed:
+        return ""
+
+    # Cap at 100 lines to avoid oversized Firebase entries
+    if len(changed) > 100:
+        changed = changed[:100]
+        changed.append("... (diff truncated at 100 lines — view source for full comparison)")
+
+    return "\n".join(changed)
+
+
+def summarize_diff(diff: str) -> str:
+    """
+    Produces a short human-readable summary of what the diff contains.
+    Shown at the top of the Review Queue item.
+    """
+    added = sum(1 for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++"))
+    removed = sum(1 for l in diff.splitlines() if l.startswith("-") and not l.startswith("---"))
+    parts = []
+    if added:
+        parts.append(f"{added} line(s) added")
+    if removed:
+        parts.append(f"{removed} line(s) removed")
+    return "; ".join(parts) if parts else "Content changed (see diff)"
+
+
+# ---------------------------------------------------------------------------
+# Core scan logic
+# ---------------------------------------------------------------------------
+
+def scan_jurisdiction(j: dict, scan_date: str) -> dict:
+    """
+    Scans one jurisdiction. Returns a result dict with status and optional diff.
+    """
+    jid = j["id"]
+    url = j["url"]
+    result = {"id": jid, "label": j["label"], "url": url, "status": "ok", "diff": ""}
+
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "PWMonitor/1.0"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            content = resp.read()
-        return hashlib.sha256(content).hexdigest()
+        html = fetch_page(url)
+        new_text = extract_text(html)
+        new_hash = compute_hash(new_text)
     except Exception as e:
-        print(f"  ERROR fetching {url}: {e}")
-        return None
-
-
-def scan_source(source: dict) -> dict:
-    sid   = source["id"]
-    label = source["label"]
-    url   = source["url"]
-
-    print(f"Scanning [{sid}] {label}")
-    new_hash = fetch_hash(url)
-
-    result = {
-        "id":     sid,
-        "label":  label,
-        "status": "error",
-        "url":    url,
-    }
-
-    if new_hash is None:
         result["status"] = "fetch_error"
+        result["error"] = str(e)
         return result
 
-    stored = fb_get(f"hashes/{sid}")
+    # Load stored baseline from Firebase
+    baseline = fb_get(f"baselines/{jid}") or {}
+    old_hash = baseline.get("hash", "")
+    old_text = baseline.get("text", "")
 
-    if stored is None:
-        # First run — establish baseline, do not create a queue item
-        fb_put(f"hashes/{sid}", {"hash": new_hash, "first_seen": _now()})
-        print(f"  Baseline stored for {sid}")
-        result["status"] = "baseline"
+    # First run — store baseline, do not create a queue item
+    if not old_hash:
+        fb_put(f"baselines/{jid}", {
+            "hash": new_hash,
+            "text": new_text,
+            "stored_at": scan_date
+        })
+        result["status"] = "baseline_stored"
         return result
 
-    if stored.get("hash") == new_hash:
-        print(f"  No change — {sid}")
-        result["status"] = "unchanged"
+    # No change
+    if new_hash == old_hash:
+        result["status"] = "no_change"
         return result
 
-    # Page changed — update stored hash and push to review queue
-    fb_put(f"hashes/{sid}", {"hash": new_hash, "updated": _now()})
+    # Change detected — compute diff
+    diff = compute_diff(old_text, new_text)
+    diff_summary = summarize_diff(diff)
 
-    is_watch   = source in WATCH_JURISDICTIONS
-    is_agg     = source in AGGREGATE_SOURCES
+    # Push to Review Queue
     queue_item = {
-        "state":          source.get("state", ""),
-        "title":          f"{label} — Page Updated {_today()}",
-        "summary":        (
-            f"Automated scan detected a change on the {label} prevailing wage page. "
+        "jurisdiction_id": jid,
+        "jurisdiction_label": j["label"],
+        "url": url,
+        "detected_at": scan_date,
+        "status": "pending",
+        "source": "auto_scanner",
+        "category": "Rate change",          # Default; reviewer must confirm or correct
+        "impact_level": "Medium",           # Default; reviewer must set correct level
+        "title": f"{j['label']} — Page Updated {scan_date}",
+        "summary": (
+            f"Automated scan detected a change on the {j['label']} prevailing wage page. "
             f"Review the source link and summarize what changed before approving. "
-            f"Detected: {_today()}."
+            f"Detected: {scan_date}."
         ),
-        "source_url":     url,
-        "category":       "Rate change",
-        "status":         "pending",
-        "impact_level":   "Medium",
-        "effective_date": "Review required",
-        "notes":          "Auto-flagged by scanner. Edit this summary before approving.",
-        "watch_list":     is_watch,
-        "aggregate":      is_agg,
-        "detected_at":    _now(),
-        "reviewed":       False,
+        "diff_summary": diff_summary,
+        "diff": diff,
+        "internal_notes": "Auto-flagged by scanner. Edit this summary before approving.",
+        "reviewer": "",
+        "reviewed_at": "",
+        "decision": "",
+        "decision_notes": ""
     }
-    fb_push("review_queue", queue_item)
-    print(f"  CHANGE DETECTED — queued for review: {sid}")
-    result["status"] = "changed"
+    fb_post("review_queue", queue_item)
+
+    # Update baseline to new version
+    fb_put(f"baselines/{jid}", {
+        "hash": new_hash,
+        "text": new_text,
+        "stored_at": scan_date
+    })
+
+    result["status"] = "change_detected"
+    result["diff_summary"] = diff_summary
+    result["diff"] = diff
     return result
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _today() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-
 # ---------------------------------------------------------------------------
-# Main
+# Entry point
 # ---------------------------------------------------------------------------
 
 def main():
-    print(f"PW Monitor scanner starting — {_now()}")
-    results = {"date": _today(), "sources": {}}
+    scan_date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    all_jurisdictions = JURISDICTIONS + WATCH_LIST
+    log = {"date": scan_date, "results": []}
 
-    for source in ALL_SOURCES:
-        outcome = scan_source(source)
-        results["sources"][source["id"]] = outcome["status"]
+    print(f"PW Monitor Scanner v2.0 — {scan_date}")
+    print(f"Scanning {len(all_jurisdictions)} jurisdictions...\n")
+
+    for j in all_jurisdictions:
+        print(f"  {j['id']}: {j['url']}")
+        result = scan_jurisdiction(j, scan_date)
+        log["results"].append({
+            "id": result["id"],
+            "status": result["status"],
+            "diff_summary": result.get("diff_summary", ""),
+            "error": result.get("error", "")
+        })
+        print(f"    -> {result['status']}" + (f": {result.get('diff_summary','')}" if result.get("diff_summary") else ""))
 
     # Write scan log to Firebase
-    fb_push("scan_logs", results)
-    print(f"\nScan complete. Results: {json.dumps(results['sources'], indent=2)}")
+    fb_post("scan_logs", log)
+    print(f"\nScan complete. Log written to Firebase.")
+
+    # Print summary
+    changed = [r for r in log["results"] if r["status"] == "change_detected"]
+    errors = [r for r in log["results"] if r["status"] == "fetch_error"]
+    print(f"\nSummary: {len(changed)} change(s) detected, {len(errors)} error(s).")
+    if changed:
+        print("Changed:")
+        for r in changed:
+            print(f"  {r['id']}: {r['diff_summary']}")
+    if errors:
+        print("Errors:")
+        for r in errors:
+            print(f"  {r['id']}: {r['error']}")
 
 
 if __name__ == "__main__":
