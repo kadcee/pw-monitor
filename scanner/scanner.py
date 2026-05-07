@@ -40,7 +40,7 @@ JURISDICTIONS = [
 
 WATCH_LIST = [
     {"id": "CO_STATE",   "label": "Colorado (statewide)",      "url": "https://leg.colorado.gov/bills"},
-    {"id": "VA",         "label": "Virginia",                  "url": "https://doli.virginia.gov/"},
+    {"id": "VA",         "label": "Virginia",                  "url": "https://doli.virginia.gov/programs/labor-law/prevailing-wage-law/"},
     {"id": "NC",         "label": "North Carolina",            "url": "https://www.labor.nc.gov/"},
     {"id": "AZ",         "label": "Arizona",                   "url": "https://www.azica.gov/"},
     {"id": "GA",         "label": "Georgia",                   "url": "https://dol.georgia.gov/"},
