@@ -31,7 +31,7 @@ JURISDICTIONS = [
         "state": "NV",
         "isLocal": False,
         "label": "Nevada NDOL",
-        "url": "https://labor.nv.gov/Regulations/Prevailing_Wage/Prevailing_Wage/",
+        "url": "labor.nv.gov/PrevailingWage/Public_Works___Prevailing_Wages/",
         "category": "Rate change",
         "impact": "Medium",
     },
