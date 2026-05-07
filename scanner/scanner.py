@@ -32,7 +32,7 @@ ACTIVE_JURISDICTIONS = [
         "id":    "NV",
         "state": "NV",
         "label": "Nevada NDOL — Public Works & Prevailing Wages",
-        "url":   "https://labor.nv.gov/",
+        "url":   "https://labor.nv.gov/PrevailingWage/Public_Works___Prevailing_Wages/",
     },
     {
         "id":    "WA",
