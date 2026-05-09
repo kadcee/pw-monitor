@@ -1,12 +1,10 @@
 """
 PW Monitor - Prevailing Wage Page Scanner
-Version 2.0 | May 2026
+Version 2.1 | May 2026
 
-Upgrades from v1.0:
-- Stores full extracted page text in Firebase (not just a hash)
-- Computes a text diff on each run
-- Includes the diff in the Review Queue item so reviewers see exactly what changed
-- Hash is still computed and stored as a quick-change sentinel
+Fixes from v2.0:
+- Writes detected changes to `changes/` (not `review_queue/`) to match the app's data model
+- Writes scan date and flag count to `meta/last_scan` so the app footer updates correctly
 """
 
 import os
@@ -90,7 +88,7 @@ def extract_text(html: str) -> str:
 def fetch_page(url: str) -> str:
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "PW-Monitor-Scanner/2.0 (internal compliance tool)"}
+        headers={"User-Agent": "PW-Monitor-Scanner/2.1 (internal compliance tool)"}
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
         return resp.read().decode("utf-8", errors="replace")
@@ -133,10 +131,6 @@ def fb_post(path: str, data):
 # ---------------------------------------------------------------------------
 
 def compute_diff(old_text: str, new_text: str) -> str:
-    """
-    Returns a unified-style diff of meaningful lines only.
-    Limits output to 100 lines to keep Firebase payloads manageable.
-    """
     old_lines = old_text.splitlines(keepends=True)
     new_lines = new_text.splitlines(keepends=True)
 
@@ -148,13 +142,11 @@ def compute_diff(old_text: str, new_text: str) -> str:
         lineterm=""
     ))
 
-    # Filter to changed lines only (+ / - / @@ context markers)
     changed = [l for l in diff if l.startswith(("+", "-", "@@", "---", "+++"))]
 
     if not changed:
         return ""
 
-    # Cap at 100 lines to avoid oversized Firebase entries
     if len(changed) > 100:
         changed = changed[:100]
         changed.append("... (diff truncated at 100 lines — view source for full comparison)")
@@ -163,10 +155,6 @@ def compute_diff(old_text: str, new_text: str) -> str:
 
 
 def summarize_diff(diff: str) -> str:
-    """
-    Produces a short human-readable summary of what the diff contains.
-    Shown at the top of the Review Queue item.
-    """
     added = sum(1 for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++"))
     removed = sum(1 for l in diff.splitlines() if l.startswith("-") and not l.startswith("---"))
     parts = []
@@ -182,9 +170,6 @@ def summarize_diff(diff: str) -> str:
 # ---------------------------------------------------------------------------
 
 def scan_jurisdiction(j: dict, scan_date: str) -> dict:
-    """
-    Scans one jurisdiction. Returns a result dict with status and optional diff.
-    """
     jid = j["id"]
     url = j["url"]
     result = {"id": jid, "label": j["label"], "url": url, "status": "ok", "diff": ""}
@@ -198,7 +183,6 @@ def scan_jurisdiction(j: dict, scan_date: str) -> dict:
         result["error"] = str(e)
         return result
 
-    # Load stored baseline from Firebase
     baseline = fb_get(f"baselines/{jid}") or {}
     old_hash = baseline.get("hash", "")
     old_text = baseline.get("text", "")
@@ -222,33 +206,33 @@ def scan_jurisdiction(j: dict, scan_date: str) -> dict:
     diff = compute_diff(old_text, new_text)
     diff_summary = summarize_diff(diff)
 
-    # Push to Review Queue
-    queue_item = {
-        "jurisdiction_id": jid,
-        "jurisdiction_label": j["label"],
-        "url": url,
-        "detected_at": scan_date,
-        "status": "pending",
-        "source": "auto_scanner",
-        "category": "Rate change",          # Default; reviewer must confirm or correct
-        "impact_level": "Medium",           # Default; reviewer must set correct level
+    # FIX: write to `changes/` so the app picks it up
+    change_item = {
+        "state": j["label"],
         "title": f"{j['label']} — Page Updated {scan_date}",
+        "category": "Rate change",
+        "impact": "Medium",
+        "type": "Enacted",
         "summary": (
             f"Automated scan detected a change on the {j['label']} prevailing wage page. "
-            f"Review the source link and summarize what changed before approving. "
-            f"Detected: {scan_date}."
+            f"Review the source link and update this summary before approving. "
+            f"Detected: {scan_date}. Change: {diff_summary}."
         ),
+        "source": url,
+        "date": scan_date,
+        "effectiveDate": "Pending",
+        "status": "pending",
+        "reviewer": "",
+        "notes": f"Auto-flagged by scanner. Diff: {diff_summary}",
+        "reviewed": None,
+        "isLocal": jid == "DENVER_CO",
+        "autoDetected": True,
         "diff_summary": diff_summary,
         "diff": diff,
-        "internal_notes": "Auto-flagged by scanner. Edit this summary before approving.",
-        "reviewer": "",
-        "reviewed_at": "",
-        "decision": "",
-        "decision_notes": ""
     }
-    fb_post("review_queue", queue_item)
+    fb_post("changes", change_item)
 
-    # Update baseline to new version
+    # Update baseline
     fb_put(f"baselines/{jid}", {
         "hash": new_hash,
         "text": new_text,
@@ -270,7 +254,7 @@ def main():
     all_jurisdictions = JURISDICTIONS + WATCH_LIST
     log = {"date": scan_date, "results": []}
 
-    print(f"PW Monitor Scanner v2.0 — {scan_date}")
+    print(f"PW Monitor Scanner v2.1 — {scan_date}")
     print(f"Scanning {len(all_jurisdictions)} jurisdictions...\n")
 
     for j in all_jurisdictions:
@@ -284,11 +268,18 @@ def main():
         })
         print(f"    -> {result['status']}" + (f": {result.get('diff_summary','')}" if result.get("diff_summary") else ""))
 
-    # Write scan log to Firebase
+    # Write scan log
     fb_post("scan_logs", log)
-    print(f"\nScan complete. Log written to Firebase.")
 
-    # Print summary
+    # FIX: write meta/last_scan so the app footer shows the correct date
+    changes_found = sum(1 for r in log["results"] if r["status"] == "change_detected")
+    fb_put("meta/last_scan", {
+        "date": scan_date,
+        "changes_found": changes_found
+    })
+
+    print(f"\nScan complete. Log and meta/last_scan written to Firebase.")
+
     changed = [r for r in log["results"] if r["status"] == "change_detected"]
     errors = [r for r in log["results"] if r["status"] == "fetch_error"]
     print(f"\nSummary: {len(changed)} change(s) detected, {len(errors)} error(s).")
