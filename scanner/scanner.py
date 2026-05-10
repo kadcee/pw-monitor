@@ -18,6 +18,7 @@ import difflib
 import datetime
 import json
 import urllib.request
+import time
 from html.parser import HTMLParser
 
 
