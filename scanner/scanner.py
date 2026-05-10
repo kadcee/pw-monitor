@@ -390,6 +390,7 @@ def main():
         watch_tag = " [WATCH]" if j["watchList"] else ""
         print(f"  {j['id']}{watch_tag}: {j['url']}")
         result = scan_jurisdiction(j, scan_date)
+        time.sleep(5)
         log["results"].append({
             "id": result["id"],
             "status": result["status"],
