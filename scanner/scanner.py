@@ -7,6 +7,9 @@ Upgrades from v1.0:
 - Computes a text diff on each run
 - Includes the diff in the Review Queue item so reviewers see exactly what changed
 - Hash is still computed and stored as a quick-change sentinel
+
+Fix (May 2026):
+- Writes meta/last_scan to Firebase after each run so the app displays the correct date
 """
 
 import os
@@ -41,10 +44,11 @@ JURISDICTIONS = [
 WATCH_LIST = [
     {"id": "CO_STATE",   "label": "Colorado (statewide)",      "url": "https://leg.colorado.gov/bills"},
     {"id": "VA",         "label": "Virginia",                  "url": "https://doli.virginia.gov/programs/labor-law/prevailing-wage-law/"},
-    {"id": "WI",         "label": "Wisconsin",                 "url": "https://legis.wisconsin.gov/"},
     {"id": "NC",         "label": "North Carolina",            "url": "https://www.labor.nc.gov/"},
     {"id": "AZ",         "label": "Arizona",                   "url": "https://www.azica.gov/"},
-    {"id": "WV",         "label": "West Virginia",             "url": "https://labor.wv.gov/"},
+    {"id": "GA",         "label": "Georgia",                   "url": "https://dol.georgia.gov/"},
+    {"id": "FL",         "label": "Florida",                   "url": "https://floridajobs.org/"},
+    {"id": "TX",         "label": "Texas",                     "url": "https://www.twc.texas.gov/"},
 ]
 
 
@@ -285,10 +289,17 @@ def main():
 
     # Write scan log to Firebase
     fb_post("scan_logs", log)
+
+    # Write last scan date so the app displays the correct date
+    changed = [r for r in log["results"] if r["status"] == "change_detected"]
+    fb_put("meta/last_scan", {
+        "date": scan_date,
+        "changes_found": len(changed)
+    })
+
     print(f"\nScan complete. Log written to Firebase.")
 
     # Print summary
-    changed = [r for r in log["results"] if r["status"] == "change_detected"]
     errors = [r for r in log["results"] if r["status"] == "fetch_error"]
     print(f"\nSummary: {len(changed)} change(s) detected, {len(errors)} error(s).")
     if changed:
