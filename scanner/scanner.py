@@ -48,8 +48,6 @@ AGGREGATE_SOURCES = [
 ]
 
 WATCH_LIST = [
-    {"id": "CO_LEG",     "label": "Colorado (Legislature)",    "url": "https://leg.colorado.gov/bills"},
-    {"id": "CO_LABOR",   "label": "Colorado (CDLE)",           "url": "https://cdle.colorado.gov/prevailing-wage"},
     {"id": "VA_LEG",     "label": "Virginia (Legislature)",    "url": "https://lis.virginia.gov"},
     {"id": "VA_LABOR",   "label": "Virginia (DOLI)",           "url": "https://doli.virginia.gov/programs/labor-law/prevailing-wage-law/"},
     {"id": "NC_LEG",     "label": "North Carolina (Legislature)", "url": "https://www.ncleg.gov/legislation"},
