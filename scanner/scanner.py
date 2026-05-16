@@ -7,9 +7,6 @@ Upgrades from v1.0:
 - Computes a text diff on each run
 - Includes the diff in the Review Queue item so reviewers see exactly what changed
 - Hash is still computed and stored as a quick-change sentinel
-
-Fix (May 2026):
-- Writes meta/last_scan to Firebase after each run so the app displays the correct date
 """
 
 import os
@@ -42,13 +39,20 @@ JURISDICTIONS = [
 ]
 
 WATCH_LIST = [
-    {"id": "CO_STATE",   "label": "Colorado (statewide)",      "url": "https://leg.colorado.gov/bills"},
-    {"id": "VA",         "label": "Virginia",                  "url": "https://doli.virginia.gov/programs/labor-law/prevailing-wage-law/"},
-    {"id": "NC",         "label": "North Carolina",            "url": "https://www.labor.nc.gov/"},
-    {"id": "AZ",         "label": "Arizona",                   "url": "https://www.azica.gov/"},
-    {"id": "GA",         "label": "Georgia",                   "url": "https://dol.georgia.gov/"},
-    {"id": "FL",         "label": "Florida",                   "url": "https://floridajobs.org/"},
-    {"id": "TX",         "label": "Texas",                     "url": "https://www.twc.texas.gov/"},
+    {"id": "CO_LEG",     "label": "Colorado (Legislature)",    "url": "https://leg.colorado.gov/bills"},
+    {"id": "CO_LABOR",   "label": "Colorado (CDLE)",           "url": "https://cdle.colorado.gov/prevailing-wage"},
+    {"id": "VA_LEG",     "label": "Virginia (Legislature)",    "url": "https://lis.virginia.gov"},
+    {"id": "VA_LABOR",   "label": "Virginia (DOLI)",           "url": "https://doli.virginia.gov/programs/labor-law/prevailing-wage-law/"},
+    {"id": "NC_LEG",     "label": "North Carolina (Legislature)", "url": "https://www.ncleg.gov/legislation"},
+    {"id": "NC_LABOR",   "label": "North Carolina (NC DOL)",   "url": "https://www.labor.nc.gov/"},
+    {"id": "AZ_LEG",     "label": "Arizona (Legislature)",     "url": "https://www.azleg.gov/bills/"},
+    {"id": "AZ_LABOR",   "label": "Arizona (ICA)",             "url": "https://www.azica.gov/"},
+    {"id": "WI_LEG",     "label": "Wisconsin (Legislature)",   "url": "https://legis.wisconsin.gov/"},
+    {"id": "WI_LABOR",   "label": "Wisconsin (DWD)",           "url": "https://dwd.wisconsin.gov/"},
+    {"id": "WV_LEG",     "label": "West Virginia (Legislature)", "url": "https://www.wvlegislature.gov/"},
+    {"id": "WV_LABOR",   "label": "West Virginia (Labor Dept)", "url": "https://labor.wv.gov/"},
+    {"id": "GA_LEG",     "label": "Georgia (Legislature)",     "url": "https://www.legis.ga.gov/"},
+    {"id": "GA_LABOR",   "label": "Georgia (GA DOL)",          "url": "https://dol.georgia.gov/"},
 ]
 
 
@@ -151,13 +155,11 @@ def compute_diff(old_text: str, new_text: str) -> str:
         lineterm=""
     ))
 
-    # Filter to changed lines only (+ / - / @@ context markers)
     changed = [l for l in diff if l.startswith(("+", "-", "@@", "---", "+++"))]
 
     if not changed:
         return ""
 
-    # Cap at 100 lines to avoid oversized Firebase entries
     if len(changed) > 100:
         changed = changed[:100]
         changed.append("... (diff truncated at 100 lines — view source for full comparison)")
@@ -166,10 +168,6 @@ def compute_diff(old_text: str, new_text: str) -> str:
 
 
 def summarize_diff(diff: str) -> str:
-    """
-    Produces a short human-readable summary of what the diff contains.
-    Shown at the top of the Review Queue item.
-    """
     added = sum(1 for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++"))
     removed = sum(1 for l in diff.splitlines() if l.startswith("-") and not l.startswith("---"))
     parts = []
@@ -185,9 +183,6 @@ def summarize_diff(diff: str) -> str:
 # ---------------------------------------------------------------------------
 
 def scan_jurisdiction(j: dict, scan_date: str) -> dict:
-    """
-    Scans one jurisdiction. Returns a result dict with status and optional diff.
-    """
     jid = j["id"]
     url = j["url"]
     result = {"id": jid, "label": j["label"], "url": url, "status": "ok", "diff": ""}
@@ -201,12 +196,10 @@ def scan_jurisdiction(j: dict, scan_date: str) -> dict:
         result["error"] = str(e)
         return result
 
-    # Load stored baseline from Firebase
     baseline = fb_get(f"baselines/{jid}") or {}
     old_hash = baseline.get("hash", "")
     old_text = baseline.get("text", "")
 
-    # First run — store baseline, do not create a queue item
     if not old_hash:
         fb_put(f"baselines/{jid}", {
             "hash": new_hash,
@@ -216,16 +209,13 @@ def scan_jurisdiction(j: dict, scan_date: str) -> dict:
         result["status"] = "baseline_stored"
         return result
 
-    # No change
     if new_hash == old_hash:
         result["status"] = "no_change"
         return result
 
-    # Change detected — compute diff
     diff = compute_diff(old_text, new_text)
     diff_summary = summarize_diff(diff)
 
-    # Push to Review Queue
     queue_item = {
         "jurisdiction_id": jid,
         "jurisdiction_label": j["label"],
@@ -233,8 +223,8 @@ def scan_jurisdiction(j: dict, scan_date: str) -> dict:
         "detected_at": scan_date,
         "status": "pending",
         "source": "auto_scanner",
-        "category": "Rate change",          # Default; reviewer must confirm or correct
-        "impact_level": "Medium",           # Default; reviewer must set correct level
+        "category": "Rate change",
+        "impact_level": "Medium",
         "title": f"{j['label']} — Page Updated {scan_date}",
         "summary": (
             f"Automated scan detected a change on the {j['label']} prevailing wage page. "
@@ -251,7 +241,6 @@ def scan_jurisdiction(j: dict, scan_date: str) -> dict:
     }
     fb_post("review_queue", queue_item)
 
-    # Update baseline to new version
     fb_put(f"baselines/{jid}", {
         "hash": new_hash,
         "text": new_text,
@@ -287,10 +276,8 @@ def main():
         })
         print(f"    -> {result['status']}" + (f": {result.get('diff_summary','')}" if result.get("diff_summary") else ""))
 
-    # Write scan log to Firebase
     fb_post("scan_logs", log)
 
-    # Write last scan date so the app displays the correct date
     changed = [r for r in log["results"] if r["status"] == "change_detected"]
     fb_put("meta/last_scan", {
         "date": scan_date,
@@ -299,7 +286,6 @@ def main():
 
     print(f"\nScan complete. Log written to Firebase.")
 
-    # Print summary
     errors = [r for r in log["results"] if r["status"] == "fetch_error"]
     print(f"\nSummary: {len(changed)} change(s) detected, {len(errors)} error(s).")
     if changed:
