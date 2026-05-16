@@ -38,6 +38,15 @@ JURISDICTIONS = [
     {"id": "DENVER_CO",  "label": "Denver, CO (Local)",        "url": "https://denvergov.org/Government/Agencies-Departments-Offices/Agencies-Departments-Offices-Directory/Auditors-Office/Prevailing-Wage"},
 ]
 
+AGGREGATE_SOURCES = [
+    # National Conference of State Legislatures — tracks prevailing wage law status across all 50 states.
+    # Catches new state adoptions, repeals, or major amendments before official labor department pages update.
+    {"id": "NCSL",       "label": "NCSL — Prevailing Wage Laws (National)", "url": "https://www.ncsl.org/labor-and-employment/prevailing-wage-laws"},
+    # Economic Policy Institute — tracks state-level prevailing wage policy research and legislation nationally.
+    # Catches new bills, coverage changes, and policy shifts not yet reflected on state agency pages.
+    {"id": "EPI",        "label": "EPI — Prevailing Wage Research (National)", "url": "https://www.epi.org/research/prevailing-wage/"},
+]
+
 WATCH_LIST = [
     {"id": "CO_LEG",     "label": "Colorado (Legislature)",    "url": "https://leg.colorado.gov/bills"},
     {"id": "CO_LABOR",   "label": "Colorado (CDLE)",           "url": "https://cdle.colorado.gov/prevailing-wage"},
@@ -259,10 +268,10 @@ def scan_jurisdiction(j: dict, scan_date: str) -> dict:
 
 def main():
     scan_date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
-    all_jurisdictions = JURISDICTIONS + WATCH_LIST
+    all_jurisdictions = JURISDICTIONS + WATCH_LIST + AGGREGATE_SOURCES
     log = {"date": scan_date, "results": []}
 
-    print(f"PW Monitor Scanner v2.0 — {scan_date}")
+    print(f"PW Monitor Scanner v2.1 — {scan_date}")
     print(f"Scanning {len(all_jurisdictions)} jurisdictions...\n")
 
     for j in all_jurisdictions:
