@@ -1,0 +1,313 @@
+"""
+PW Monitor — Connection Test Script
+Run this before deploying scanner.py to GitHub Actions.
+
+Tests:
+  1. Firebase read  — reads baselines/ node
+  2. Firebase write — writes a test value then deletes it
+  3. Gemini API     — sends a minimal prompt and verifies JSON response
+  4. URL fetch      — checks all 25 source URLs return HTTP 200
+
+Usage:
+  export FIREBASE_DATABASE_URL="https://your-project.firebaseio.com"
+  export FIREBASE_SECRET="your-firebase-secret"
+  export GEMINI_API_KEY="your-gemini-api-key"
+  python test_connections.py
+
+All three env vars must be set. The script will not write any real data.
+The Firebase write test creates and immediately deletes a value under _test/.
+"""
+
+import os
+import json
+import urllib.request
+import urllib.error
+import sys
+
+PASS = "\033[92mPASS\033[0m"
+FAIL = "\033[91mFAIL\033[0m"
+WARN = "\033[93mWARN\033[0m"
+
+
+# ---------------------------------------------------------------------------
+# Source list (must match scanner.py exactly)
+# ---------------------------------------------------------------------------
+
+ALL_SOURCES = [
+    # Active jurisdictions
+    {"id": "CA",        "label": "California (CA)",                           "url": "https://www.dir.ca.gov/Public-Works/Prevailing-Wage.html"},
+    {"id": "NV",        "label": "Nevada (NV)",                               "url": "https://labor.nv.gov/Employer/Prevailing_Wage_Information/"},
+    {"id": "WA",        "label": "Washington (WA)",                           "url": "https://lni.wa.gov/licensing-permits/public-works-projects/prevailing-wage"},
+    {"id": "MA",        "label": "Massachusetts (MA)",                        "url": "https://www.mass.gov/prevailing-wages"},
+    {"id": "MN",        "label": "Minnesota (MN)",                            "url": "https://www.dli.mn.gov/business/employment-practices/prevailing-wage"},
+    {"id": "NJ",        "label": "New Jersey (NJ)",                           "url": "https://www.nj.gov/labor/wageandhour/tools-resources/prevailingwage/"},
+    {"id": "NY",        "label": "New York (NY)",                             "url": "https://dol.ny.gov/prevailing-wages"},
+    {"id": "MI",        "label": "Michigan (MI)",                             "url": "https://www.michigan.gov/leo/bureaus-agencies/bers/prevailing-wage"},
+    {"id": "DENVER_CO", "label": "Denver, CO (Local)",                        "url": "https://denvergov.org/Government/Agencies-Departments-Offices/Agencies-Departments-Offices-Directory/Auditors-Office/Prevailing-Wage"},
+    # Watch-list
+    {"id": "VA_LEG",    "label": "Virginia (Legislature)",                    "url": "https://lis.virginia.gov"},
+    {"id": "VA_LABOR",  "label": "Virginia (DOLI)",                           "url": "https://doli.virginia.gov/programs/labor-law/prevailing-wage-law/"},
+    {"id": "NC_LEG",    "label": "North Carolina (Legislature)",              "url": "https://www.ncleg.gov/legislation"},
+    {"id": "NC_LABOR",  "label": "North Carolina (NC DOL)",                   "url": "https://www.labor.nc.gov/"},
+    {"id": "AZ_LEG",    "label": "Arizona (Legislature)",                     "url": "https://www.azleg.gov/bills/"},
+    {"id": "AZ_LABOR",  "label": "Arizona (ICA)",                             "url": "https://www.azica.gov/"},
+    {"id": "WI_LEG",    "label": "Wisconsin (Legislature)",                   "url": "https://legis.wisconsin.gov/"},
+    {"id": "WI_LABOR",  "label": "Wisconsin (DWD)",                           "url": "https://dwd.wisconsin.gov/"},
+    {"id": "WV_LEG",    "label": "West Virginia (Legislature)",               "url": "https://www.wvlegislature.gov/"},
+    {"id": "WV_LABOR",  "label": "West Virginia (Labor Dept)",                "url": "https://labor.wv.gov/"},
+    {"id": "GA_LEG",    "label": "Georgia (Legislature)",                     "url": "https://www.legis.ga.gov/"},
+    {"id": "GA_LABOR",  "label": "Georgia (GA DOL)",                          "url": "https://dol.georgia.gov/"},
+    {"id": "TN_LEG",    "label": "Tennessee (Legislature)",                   "url": "https://wapp.capitol.tn.gov/apps/billsearch/billsearchadvanced.aspx"},
+    {"id": "TN_LABOR",  "label": "Tennessee (Labor Dept)",                    "url": "https://www.tn.gov/workforce/employees/labor-laws/labor-laws-redirect/wages-breaks/prevailing-wage.html"},
+    # Aggregate
+    {"id": "NCSL",      "label": "NCSL",                                      "url": "https://www.ncsl.org/labor-and-employment/prevailing-wage-laws"},
+    {"id": "EPI",       "label": "EPI",                                       "url": "https://www.epi.org/research/prevailing-wage/"},
+]
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def check_env():
+    missing = []
+    for var in ["FIREBASE_DATABASE_URL", "FIREBASE_SECRET", "GEMINI_API_KEY"]:
+        if not os.environ.get(var):
+            missing.append(var)
+    return missing
+
+
+def fb_read(firebase_url, firebase_secret, path):
+    url = f"{firebase_url.rstrip('/')}/{path}.json?auth={firebase_secret}"
+    req = urllib.request.Request(url, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read())
+
+
+def fb_put(firebase_url, firebase_secret, path, data):
+    url = f"{firebase_url.rstrip('/')}/{path}.json?auth={firebase_secret}"
+    payload = json.dumps(data).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, method="PUT",
+                                  headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read())
+
+
+def fb_delete(firebase_url, firebase_secret, path):
+    url = f"{firebase_url.rstrip('/')}/{path}.json?auth={firebase_secret}"
+    req = urllib.request.Request(url, method="DELETE")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {firebase_secret}")
+    # Firebase delete: PUT null
+    payload = b"null"
+    req2 = urllib.request.Request(url, data=payload, method="PUT",
+                                   headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req2, timeout=10) as resp:
+        return json.loads(resp.read())
+
+
+# ---------------------------------------------------------------------------
+# Test 1: Firebase read
+# ---------------------------------------------------------------------------
+
+def test_firebase_read(firebase_url, firebase_secret):
+    print("\n[1] Firebase Read")
+    try:
+        data = fb_read(firebase_url, firebase_secret, "baselines")
+        if data is None:
+            print(f"  {WARN} Connected but baselines/ is empty. Expected on first run.")
+        else:
+            count = len(data) if isinstance(data, dict) else "?"
+            print(f"  {PASS} Read baselines/ — {count} baseline(s) found.")
+        return True
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            print(f"  {FAIL} Authentication failed (HTTP 401). Check FIREBASE_SECRET.")
+        elif e.code == 403:
+            print(f"  {FAIL} Permission denied (HTTP 403). Check Firebase database rules (read: true).")
+        else:
+            print(f"  {FAIL} HTTP {e.code}: {e.reason}")
+        return False
+    except Exception as e:
+        print(f"  {FAIL} {e}")
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Test 2: Firebase write + cleanup
+# ---------------------------------------------------------------------------
+
+def test_firebase_write(firebase_url, firebase_secret):
+    print("\n[2] Firebase Write")
+    test_path = "_test/connection_check"
+    test_value = {"status": "ok", "note": "PW Monitor connection test — safe to delete"}
+    try:
+        fb_put(firebase_url, firebase_secret, test_path, test_value)
+        # Verify it was written
+        verify = fb_read(firebase_url, firebase_secret, test_path)
+        if verify and verify.get("status") == "ok":
+            print(f"  {PASS} Wrote and verified test value at {test_path}.")
+        else:
+            print(f"  {WARN} Write succeeded but read-back did not match.")
+        # Clean up
+        fb_delete(firebase_url, firebase_secret, test_path)
+        print(f"  {PASS} Cleaned up test value.")
+        return True
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            print(f"  {FAIL} Write permission denied (HTTP {e.code}). Check Firebase database rules (write: true).")
+        else:
+            print(f"  {FAIL} HTTP {e.code}: {e.reason}")
+        return False
+    except Exception as e:
+        print(f"  {FAIL} {e}")
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Test 3: Gemini API
+# ---------------------------------------------------------------------------
+
+def test_gemini(gemini_api_key):
+    print("\n[3] Gemini API")
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"gemini-2.5-flash-lite:generateContent?key={gemini_api_key}"
+    )
+    prompt = (
+        'Respond with this exact JSON and nothing else: '
+        '{"relevant": true, "confidence": "high", "summary": "test ok", '
+        '"impact_level": "Low", "category": "Administrative / technical update"}'
+    )
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 100}
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST",
+                                  headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+        raw = result["candidates"][0]["content"]["parts"][0]["text"]
+        clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        parsed = json.loads(clean)
+        if parsed.get("relevant") is True and parsed.get("confidence") == "high":
+            print(f"  {PASS} Gemini responded correctly and JSON parsed cleanly.")
+            print(f"         Model: gemini-2.5-flash-lite | Response: {clean[:80]}")
+        else:
+            print(f"  {WARN} Gemini responded but output was unexpected: {clean[:120]}")
+        return True
+    except urllib.error.HTTPError as e:
+        if e.code == 400:
+            print(f"  {FAIL} Bad request (HTTP 400). Check GEMINI_API_KEY format.")
+        elif e.code == 403:
+            print(f"  {FAIL} API key rejected (HTTP 403). Verify key at aistudio.google.com.")
+        elif e.code == 429:
+            print(f"  {WARN} Rate limited (HTTP 429). Key is valid but free tier limit hit. Retry in 1 minute.")
+        else:
+            print(f"  {FAIL} HTTP {e.code}: {e.reason}")
+        return False
+    except json.JSONDecodeError as e:
+        print(f"  {WARN} Gemini responded but JSON parsing failed: {e}")
+        print(f"         Raw response: {raw[:200]}")
+        return False
+    except Exception as e:
+        print(f"  {FAIL} {e}")
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Test 4: URL fetch for all 25 sources
+# ---------------------------------------------------------------------------
+
+def test_urls():
+    print(f"\n[4] URL Fetch — all {len(ALL_SOURCES)} sources")
+    results = []
+    for source in ALL_SOURCES:
+        sid   = source["id"]
+        url   = source["url"]
+        label = source["label"]
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "PW-Monitor-Test/3.2 (internal compliance tool)"}
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                status = resp.status
+            if status == 200:
+                print(f"  {PASS} [{sid}] {label}")
+                results.append({"id": sid, "ok": True, "status": status})
+            else:
+                print(f"  {WARN} [{sid}] {label} — HTTP {status}")
+                results.append({"id": sid, "ok": False, "status": status})
+        except urllib.error.HTTPError as e:
+            print(f"  {FAIL} [{sid}] {label} — HTTP {e.code} {e.reason}")
+            results.append({"id": sid, "ok": False, "status": e.code, "error": str(e)})
+        except urllib.error.URLError as e:
+            print(f"  {FAIL} [{sid}] {label} — URL error: {e.reason}")
+            results.append({"id": sid, "ok": False, "status": None, "error": str(e)})
+        except Exception as e:
+            print(f"  {FAIL} [{sid}] {label} — {e}")
+            results.append({"id": sid, "ok": False, "status": None, "error": str(e)})
+
+    passed = sum(1 for r in results if r["ok"])
+    failed = [r for r in results if not r["ok"]]
+    print(f"\n  URLs reachable: {passed}/{len(ALL_SOURCES)}")
+    if failed:
+        print(f"  Unreachable ({len(failed)}):")
+        for r in failed:
+            print(f"    [{r['id']}] status={r.get('status','?')} — {r.get('error','')}")
+    return len(failed) == 0
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    print("=" * 60)
+    print("PW Monitor — Connection Test Script")
+    print("=" * 60)
+
+    # Check env vars
+    missing = check_env()
+    if missing:
+        print(f"\n{FAIL} Missing environment variables: {', '.join(missing)}")
+        print("Set all three before running this script:")
+        print("  export FIREBASE_DATABASE_URL=...")
+        print("  export FIREBASE_SECRET=...")
+        print("  export GEMINI_API_KEY=...")
+        sys.exit(1)
+
+    firebase_url    = os.environ["FIREBASE_DATABASE_URL"]
+    firebase_secret = os.environ["FIREBASE_SECRET"]
+    gemini_api_key  = os.environ["GEMINI_API_KEY"]
+
+    print(f"\nFirebase URL: {firebase_url}")
+    print(f"Gemini model: gemini-2.5-flash-lite")
+    print(f"Sources to test: {len(ALL_SOURCES)}")
+
+    r1 = test_firebase_read(firebase_url, firebase_secret)
+    r2 = test_firebase_write(firebase_url, firebase_secret)
+    r3 = test_gemini(gemini_api_key)
+    r4 = test_urls()
+
+    print("\n" + "=" * 60)
+    print("Summary")
+    print("=" * 60)
+    print(f"  [1] Firebase read:   {'PASS' if r1 else 'FAIL'}")
+    print(f"  [2] Firebase write:  {'PASS' if r2 else 'FAIL'}")
+    print(f"  [3] Gemini API:      {'PASS' if r3 else 'FAIL'}")
+    print(f"  [4] URL fetch:       {'PASS' if r4 else 'FAIL (see above)'}")
+
+    all_passed = all([r1, r2, r3, r4])
+    if all_passed:
+        print(f"\n{PASS} All tests passed. Safe to deploy scanner.py to GitHub Actions.")
+    else:
+        print(f"\n{FAIL} One or more tests failed. Fix issues above before deploying.")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
