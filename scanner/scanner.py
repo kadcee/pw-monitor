@@ -11,7 +11,9 @@ Changes from v2.0:
 - Watch-list updated: CO removed, TN added; all 7 watch-list states have dual URLs
 - FL and TX removed from watch-list (no credible legislative path)
 - 5-second delay between Gemini calls to prevent rate limit errors (HTTP 429)
-- Total monitored sources: 25 (9 active + 14 watch-list + 2 aggregate)
+- Active jurisdiction URLs reviewed and updated; NV, WA, NJ now have dual URLs
+- meta/last_scan updated after each run so app sidebar stays current
+- Total monitored sources: 29 (13 active + 14 watch-list + 2 aggregate)
 """
 
 import os
@@ -30,9 +32,9 @@ from html.parser import HTMLParser
 # Configuration
 # ---------------------------------------------------------------------------
 
-FIREBASE_URL = os.environ["FIREBASE_DATABASE_URL"].rstrip("/")
+FIREBASE_URL    = os.environ["FIREBASE_DATABASE_URL"].rstrip("/")
 FIREBASE_SECRET = os.environ["FIREBASE_SECRET"]
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+GEMINI_API_KEY  = os.environ["GEMINI_API_KEY"]
 
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
@@ -42,15 +44,19 @@ GEMINI_URL = (
 GEMINI_DELAY_SECONDS = 5  # Prevents HTTP 429 rate limit errors on free tier
 
 JURISDICTIONS = [
-    {"id": "CA",        "label": "California (CA)",       "url": "https://www.dir.ca.gov/Public-Works/Prevailing-Wage.html",  "watch_list": False},
-    {"id": "NV",        "label": "Nevada (NV)",            "url": "https://labor.nv.gov/Employer/Prevailing_Wage_Information/",  "watch_list": False},
-    {"id": "WA",        "label": "Washington (WA)",        "url": "https://lni.wa.gov/licensing-permits/public-works-projects/prevailing-wage",  "watch_list": False},
-    {"id": "MA",        "label": "Massachusetts (MA)",     "url": "https://www.mass.gov/prevailing-wages",  "watch_list": False},
-    {"id": "MN",        "label": "Minnesota (MN)",         "url": "https://www.dli.mn.gov/business/employment-practices/prevailing-wage",  "watch_list": False},
-    {"id": "NJ",        "label": "New Jersey (NJ)",        "url": "https://www.nj.gov/labor/wageandhour/tools-resources/prevailingwage/",  "watch_list": False},
-    {"id": "NY",        "label": "New York (NY)",          "url": "https://dol.ny.gov/prevailing-wages",  "watch_list": False},
-    {"id": "MI",        "label": "Michigan (MI)",          "url": "https://www.michigan.gov/leo/bureaus-agencies/bers/prevailing-wage",  "watch_list": False},
-    {"id": "DENVER_CO", "label": "Denver, CO (Local)",     "url": "https://denvergov.org/Government/Agencies-Departments-Offices/Agencies-Departments-Offices-Directory/Auditors-Office/Prevailing-Wage",  "watch_list": False},
+    {"id": "CA",        "label": "California (CA)",                        "url": "https://www.dir.ca.gov/Public-Works/PublicWorks.html",                                                                                        "watch_list": False},
+    {"id": "NV_PW",     "label": "Nevada — Prevailing Wage",               "url": "https://labor.nv.gov/PrevailingWage/Public_Works___Prevailing_Wages/",                                                                        "watch_list": False},
+    {"id": "NV_HOME",   "label": "Nevada — Labor Dept",                    "url": "https://labor.nv.gov",                                                                                                                          "watch_list": False},
+    {"id": "WA_POLICY", "label": "Washington — PW Policies",               "url": "https://lni.wa.gov/licensing-permits/public-works-projects/prevailing-wage-policies",                                                         "watch_list": False},
+    {"id": "WA_RATES",  "label": "Washington — PW Rates",                  "url": "https://www.lni.wa.gov/licensing-permits/public-works-projects/prevailing-wage-rates/",                                                       "watch_list": False},
+    {"id": "MA",        "label": "Massachusetts (MA)",                     "url": "https://www.mass.gov/prevailing-wage-program",                                                                                                  "watch_list": False},
+    {"id": "MN",        "label": "Minnesota (MN)",                         "url": "https://dli.mn.gov/prevailing-wage",                                                                                                            "watch_list": False},
+    {"id": "NJ_RATES",  "label": "New Jersey — PW Rates",                  "url": "https://www.nj.gov/labor/wageandhour/prevailing-rates/public-works/index.shtml",                                                              "watch_list": False},
+    {"id": "NJ_ACT",    "label": "New Jersey — PW Act",                    "url": "https://www.nj.gov/labor/wageandhour/tools-resources/laws/prevailingwageact.shtml",                                                           "watch_list": False},
+    {"id": "NY",        "label": "New York (NY)",                          "url": "https://dol.ny.gov/prevailing-wages",                                                                                                           "watch_list": False},
+    {"id": "NY_BUREAU", "label": "New York — Bureau of Public Work",       "url": "https://dol.ny.gov/bureau-public-work-and-prevailing-wage-enforcement",                                                                        "watch_list": False},
+    {"id": "MI",        "label": "Michigan (MI)",                          "url": "https://www.michigan.gov/leo/bureaus-agencies/ber/wage-and-hour/prevailing-wage",                                                              "watch_list": False},
+    {"id": "DENVER_CO", "label": "Denver, CO (Local)",                     "url": "https://www.denvergov.org/Government/Agencies-Departments-Offices/Agencies-Departments-Offices-Directory/Auditors-Office/Denver-Labor/Prevailing-Wage", "watch_list": False},
 ]
 
 WATCH_LIST = [
@@ -71,11 +77,11 @@ WATCH_LIST = [
 ]
 
 AGGREGATE_SOURCES = [
-    {"id": "NCSL",      "label": "NCSL — National Conference of State Legislatures", "url": "https://www.ncsl.org/labor-and-employment/prevailing-wage-laws", "watch_list": False},
-    {"id": "EPI",       "label": "EPI — Economic Policy Institute",                  "url": "https://www.epi.org/research/prevailing-wage/",                  "watch_list": False},
+    {"id": "NCSL", "label": "NCSL — National Conference of State Legislatures", "url": "https://www.ncsl.org/labor-and-employment/prevailing-wage-laws", "watch_list": False},
+    {"id": "EPI",  "label": "EPI — Economic Policy Institute",                  "url": "https://www.epi.org/research/prevailing-wage/",                  "watch_list": False},
 ]
 
-ALL_SOURCES = JURISDICTIONS + WATCH_LIST + AGGREGATE_SOURCES  # 25 total
+ALL_SOURCES = JURISDICTIONS + WATCH_LIST + AGGREGATE_SOURCES  # 29 total
 
 
 # ---------------------------------------------------------------------------
@@ -83,8 +89,6 @@ ALL_SOURCES = JURISDICTIONS + WATCH_LIST + AGGREGATE_SOURCES  # 25 total
 # ---------------------------------------------------------------------------
 
 class TextExtractor(HTMLParser):
-    """Extracts visible text from HTML, skipping scripts, styles, and nav."""
-
     SKIP_TAGS = {"script", "style", "noscript", "nav", "footer", "header"}
 
     def __init__(self):
@@ -119,7 +123,7 @@ def extract_text(html: str) -> str:
 def fetch_page(url: str) -> str:
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "PW-Monitor-Scanner/3.2 (internal compliance tool)"}
+        headers={"User-Agent": "PW-Monitor-Scanner/3.3 (internal compliance tool)"}
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
         return resp.read().decode("utf-8", errors="replace")
@@ -140,19 +144,19 @@ def fb_get(path: str):
 
 
 def fb_put(path: str, data):
-    url = f"{FIREBASE_URL}/{path}.json?auth={FIREBASE_SECRET}"
+    url     = f"{FIREBASE_URL}/{path}.json?auth={FIREBASE_SECRET}"
     payload = json.dumps(data).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, method="PUT",
-                                  headers={"Content-Type": "application/json"})
+    req     = urllib.request.Request(url, data=payload, method="PUT",
+                                     headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as resp:
         return json.loads(resp.read())
 
 
 def fb_post(path: str, data):
-    url = f"{FIREBASE_URL}/{path}.json?auth={FIREBASE_SECRET}"
+    url     = f"{FIREBASE_URL}/{path}.json?auth={FIREBASE_SECRET}"
     payload = json.dumps(data).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, method="POST",
-                                  headers={"Content-Type": "application/json"})
+    req     = urllib.request.Request(url, data=payload, method="POST",
+                                     headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as resp:
         return json.loads(resp.read())
 
@@ -162,38 +166,26 @@ def fb_post(path: str, data):
 # ---------------------------------------------------------------------------
 
 def compute_diff(old_text: str, new_text: str) -> str:
-    """
-    Returns a unified-style diff of meaningful lines only.
-    Limits output to 100 lines to keep Firebase payloads manageable.
-    """
     old_lines = old_text.splitlines(keepends=True)
     new_lines = new_text.splitlines(keepends=True)
-
-    diff = list(difflib.unified_diff(
-        old_lines, new_lines,
-        fromfile="previous", tofile="current", lineterm=""
+    diff      = list(difflib.unified_diff(
+        old_lines, new_lines, fromfile="previous", tofile="current", lineterm=""
     ))
-
     changed = [l for l in diff if l.startswith(("+", "-", "@@", "---", "+++"))]
-
     if not changed:
         return ""
-
     if len(changed) > 100:
         changed = changed[:100]
         changed.append("... (diff truncated at 100 lines — view source for full comparison)")
-
     return "\n".join(changed)
 
 
 def summarize_diff(diff: str) -> str:
     added   = sum(1 for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++"))
     removed = sum(1 for l in diff.splitlines() if l.startswith("-") and not l.startswith("---"))
-    parts = []
-    if added:
-        parts.append(f"{added} line(s) added")
-    if removed:
-        parts.append(f"{removed} line(s) removed")
+    parts   = []
+    if added:   parts.append(f"{added} line(s) added")
+    if removed: parts.append(f"{removed} line(s) removed")
     return "; ".join(parts) if parts else "Content changed (see diff)"
 
 
@@ -237,18 +229,11 @@ Rules:
 
 
 def call_gemini(label: str, url: str, is_watch_list: bool, diff: str) -> dict:
-    """
-    Sends the diff to Gemini 2.0 Flash for analysis.
-    Returns a dict with keys: relevant, confidence, summary, impact_level, category.
-    Returns None if the API call fails.
-    """
     prompt = GEMINI_PROMPT_TEMPLATE.format(
-        label=label,
-        url=url,
+        label=label, url=url,
         is_watch_list=str(is_watch_list),
-        diff=diff[:8000]  # Cap diff to avoid token limits
+        diff=diff[:8000]
     )
-
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
@@ -257,19 +242,16 @@ def call_gemini(label: str, url: str, is_watch_list: bool, diff: str) -> dict:
             "responseMimeType": "application/json"
         }
     }
-
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
+    req  = urllib.request.Request(
         GEMINI_URL, data=data, method="POST",
         headers={"Content-Type": "application/json"}
     )
-
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             result = json.loads(resp.read())
         raw_text = result["candidates"][0]["content"]["parts"][0]["text"]
-        # Strip any accidental markdown fences
-        clean = raw_text.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+        clean    = raw_text.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         return json.loads(clean)
     except urllib.error.HTTPError as e:
         print(f"    Gemini HTTP error: {e.code} {e.reason}")
@@ -284,14 +266,9 @@ def call_gemini(label: str, url: str, is_watch_list: bool, diff: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
-    """
-    Scans one source URL. Returns a result dict.
-    gemini_call_count is a mutable list used to track calls across sources
-    so the 5-second delay is applied correctly.
-    """
-    sid   = source["id"]
-    url   = source["url"]
-    label = source["label"]
+    sid          = source["id"]
+    url          = source["url"]
+    label        = source["label"]
     is_watch_list = source.get("watch_list", False)
 
     result = {"id": sid, "label": label, "url": url, "status": "ok", "diff": ""}
@@ -304,8 +281,6 @@ def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
     except Exception as e:
         result["status"] = "fetch_error"
         result["error"]  = str(e)
-
-        # Push broken URL item to review queue so team knows monitoring is down
         queue_item = {
             "jurisdiction_id":    sid,
             "jurisdiction_label": label,
@@ -321,18 +296,18 @@ def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
                 f"Error: {str(e)}. Visit the URL manually to check if the page has moved. "
                 f"If it has moved, update scanner.py with the new URL and dismiss this item."
             ),
-            "diff_summary":       "Fetch error — source not monitored",
-            "diff":               "",
-            "gemini_relevant":    None,
-            "gemini_confidence":  None,
-            "gemini_summary":     "Not analyzed — fetch failed.",
-            "gemini_impact":      None,
-            "gemini_category":    None,
-            "internal_notes":     "Auto-flagged by scanner: fetch error. Verify URL and update scanner.py if the page has moved.",
-            "reviewer":           "",
-            "reviewed_at":        "",
-            "decision":           "",
-            "decision_notes":     ""
+            "diff_summary":      "Fetch error — source not monitored",
+            "diff":              "",
+            "gemini_relevant":   None,
+            "gemini_confidence": None,
+            "gemini_summary":    "Not analyzed — fetch failed.",
+            "gemini_impact":     None,
+            "gemini_category":   None,
+            "internal_notes":    "Auto-flagged by scanner: fetch error. Verify URL and update scanner.py if the page has moved.",
+            "reviewer":          "",
+            "reviewed_at":       "",
+            "decision":          "",
+            "decision_notes":    ""
         }
         fb_post("review_queue", queue_item)
         print(f"    -> fetch_error: pushed broken URL item to review queue")
@@ -343,7 +318,6 @@ def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
     old_hash = baseline.get("hash", "")
     old_text = baseline.get("text", "")
 
-    # First run — store baseline only
     if not old_hash:
         fb_put(f"baselines/{sid}", {
             "hash":      new_hash,
@@ -353,7 +327,6 @@ def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
         result["status"] = "baseline_stored"
         return result
 
-    # No change
     if new_hash == old_hash:
         result["status"] = "no_change"
         return result
@@ -362,7 +335,6 @@ def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
     diff         = compute_diff(old_text, new_text)
     diff_summary = summarize_diff(diff)
 
-    # Apply delay before Gemini call (except on the very first call)
     if gemini_call_count[0] > 0:
         time.sleep(GEMINI_DELAY_SECONDS)
     gemini_call_count[0] += 1
@@ -370,9 +342,7 @@ def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
     print(f"    -> change detected ({diff_summary}). Calling Gemini...")
     gemini = call_gemini(label, url, is_watch_list, diff)
 
-    # ── Handle Gemini failure ────────────────────────────────────────────────
     if gemini is None:
-        # Gemini failed — route to review queue with low confidence flag
         queue_item = {
             "jurisdiction_id":    sid,
             "jurisdiction_label": label,
@@ -388,26 +358,25 @@ def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
                 f"Gemini AI analysis failed (check API key or rate limit). "
                 f"Review the source link manually before approving."
             ),
-            "diff_summary":       diff_summary,
-            "diff":               diff,
-            "gemini_relevant":    None,
-            "gemini_confidence":  "low",
-            "gemini_summary":     "Gemini analysis failed (HTTP Error 429 or API error). Review manually.",
-            "gemini_impact":      None,
-            "gemini_category":    None,
-            "internal_notes":     "Gemini analysis failed. Treat confidence as LOW. Visit source link and review manually.",
-            "reviewer":           "",
-            "reviewed_at":        "",
-            "decision":           "",
-            "decision_notes":     ""
+            "diff_summary":      diff_summary,
+            "diff":              diff,
+            "gemini_relevant":   None,
+            "gemini_confidence": "low",
+            "gemini_summary":    "Gemini analysis failed (HTTP Error 429 or API error). Review manually.",
+            "gemini_impact":     None,
+            "gemini_category":   None,
+            "internal_notes":    "Gemini analysis failed. Treat confidence as LOW. Visit source link and review manually.",
+            "reviewer":          "",
+            "reviewed_at":       "",
+            "decision":          "",
+            "decision_notes":    ""
         }
         fb_post("review_queue", queue_item)
-        result["status"]      = "change_detected_gemini_failed"
+        result["status"]       = "change_detected_gemini_failed"
         result["diff_summary"] = diff_summary
         print(f"    -> Gemini failed. Item pushed to review queue with low confidence.")
 
     elif not gemini.get("relevant", False):
-        # ── Non-relevant: auto-dismiss to archive ────────────────────────────
         archive_item = {
             "jurisdiction_id":    sid,
             "jurisdiction_label": label,
@@ -426,19 +395,18 @@ def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
             "gemini_summary":     gemini.get("summary", ""),
             "gemini_impact":      gemini.get("impact_level", "Low"),
             "gemini_category":    gemini.get("category", ""),
-            "internal_notes":     "Auto-dismissed by Gemini AI as non-relevant (page redesign, nav update, or unrelated content change).",
+            "internal_notes":     "Auto-dismissed by Gemini AI as non-relevant.",
             "reviewer":           "auto_scanner",
             "reviewed_at":        scan_date,
             "decision":           "dismissed",
             "decision_notes":     f"Auto-dismissed. Gemini confidence: {gemini.get('confidence', 'unknown')}."
         }
         fb_post("archive", archive_item)
-        result["status"]      = "auto_dismissed"
+        result["status"]       = "auto_dismissed"
         result["diff_summary"] = diff_summary
         print(f"    -> Non-relevant (confidence: {gemini.get('confidence')}). Auto-dismissed to archive.")
 
     else:
-        # ── Relevant: push to review queue ───────────────────────────────────
         queue_item = {
             "jurisdiction_id":    sid,
             "jurisdiction_label": label,
@@ -464,17 +432,15 @@ def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
             "decision_notes":     ""
         }
         fb_post("review_queue", queue_item)
-        result["status"]      = "change_detected"
+        result["status"]       = "change_detected"
         result["diff_summary"] = diff_summary
         print(f"    -> Relevant (confidence: {gemini.get('confidence')}, impact: {gemini.get('impact_level')}). Pushed to review queue.")
 
-    # ── Update baseline ──────────────────────────────────────────────────────
     fb_put(f"baselines/{sid}", {
         "hash":      new_hash,
         "text":      new_text,
         "stored_at": scan_date
     })
-
     result["diff"] = diff
     return result
 
@@ -484,9 +450,9 @@ def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
 # ---------------------------------------------------------------------------
 
 def main():
-    scan_date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
-    log = {"date": scan_date, "results": []}
-    gemini_call_count = [0]  # Mutable so scan_source can increment it
+    scan_date          = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    log                = {"date": scan_date, "results": []}
+    gemini_call_count  = [0]
 
     print(f"PW Monitor Scanner v3.3 — {scan_date}")
     print(f"Scanning {len(ALL_SOURCES)} sources...\n")
@@ -501,10 +467,17 @@ def main():
             "error":        result.get("error", "")
         })
 
-    # Write scan log to Firebase
     fb_post("scan_logs", log)
 
-    # Print summary
+    changes_found = sum(1 for r in log["results"] if r["status"] in ("change_detected", "change_detected_gemini_failed"))
+    fb_put("meta/last_scan", {
+        "date":            scan_date,
+        "changes_found":   changes_found,
+        "sources_scanned": len(ALL_SOURCES),
+        "errors":          sum(1 for r in log["results"] if r["status"] == "fetch_error"),
+        "auto_dismissed":  sum(1 for r in log["results"] if r["status"] == "auto_dismissed"),
+    })
+
     changed       = [r for r in log["results"] if r["status"] == "change_detected"]
     dismissed     = [r for r in log["results"] if r["status"] == "auto_dismissed"]
     gemini_failed = [r for r in log["results"] if r["status"] == "change_detected_gemini_failed"]
