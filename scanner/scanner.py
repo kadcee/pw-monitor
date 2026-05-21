@@ -1,19 +1,12 @@
 """
 PW Monitor — Prevailing Wage Page Scanner
-Version 3.3 | May 2026
+Version 3.4 | May 2026
 
-Changes from v2.0:
-- Gemini AI analysis added for every detected page change
-- Non-relevant changes auto-dismissed to archive (never reach review queue)
-- Relevant changes include AI summary, impact suggestion, category, confidence level
-- Broken URL detection: fetch errors push a pending item to the review queue
-- AGGREGATE_SOURCES (NCSL, EPI) added as automated daily scan
-- Watch-list updated: CO removed, TN added; all 7 watch-list states have dual URLs
-- FL and TX removed from watch-list (no credible legislative path)
-- 5-second delay between Gemini calls to prevent rate limit errors (HTTP 429)
-- Active jurisdiction URLs reviewed and updated; NV, WA, NJ now have dual URLs
-- meta/last_scan updated after each run so app sidebar stays current
-- Total monitored sources: 29 (13 active + 14 watch-list + 2 aggregate)
+Changes from v3.3:
+- Aggregate sources updated: old NCSL and EPI URLs replaced
+- NCSL now monitored at two URLs (labor-and-employment + in-dc)
+- EPI now monitored at four URLs (unions-and-labor-standards, wages-incomes-and-wealth, policywatch, immigration)
+- Total monitored sources: 33 (13 active + 14 watch-list + 6 aggregate)
 """
 
 import os
@@ -23,7 +16,6 @@ import datetime
 import json
 import time
 import urllib.request
-import urllib.parse
 import urllib.error
 from html.parser import HTMLParser
 
@@ -41,47 +33,51 @@ GEMINI_URL = (
     f"gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
 )
 
-GEMINI_DELAY_SECONDS = 5  # Prevents HTTP 429 rate limit errors on free tier
+GEMINI_DELAY_SECONDS = 5
 
 JURISDICTIONS = [
-    {"id": "CA",        "label": "California (CA)",                        "url": "https://www.dir.ca.gov/Public-Works/PublicWorks.html",                                                                                        "watch_list": False},
-    {"id": "NV_PW",     "label": "Nevada — Prevailing Wage",               "url": "https://labor.nv.gov/PrevailingWage/Public_Works___Prevailing_Wages/",                                                                        "watch_list": False},
-    {"id": "NV_HOME",   "label": "Nevada — Labor Dept",                    "url": "https://labor.nv.gov",                                                                                                                          "watch_list": False},
-    {"id": "WA_POLICY", "label": "Washington — PW Policies",               "url": "https://lni.wa.gov/licensing-permits/public-works-projects/prevailing-wage-policies",                                                         "watch_list": False},
-    {"id": "WA_RATES",  "label": "Washington — PW Rates",                  "url": "https://www.lni.wa.gov/licensing-permits/public-works-projects/prevailing-wage-rates/",                                                       "watch_list": False},
-    {"id": "MA",        "label": "Massachusetts (MA)",                     "url": "https://www.mass.gov/prevailing-wage-program",                                                                                                  "watch_list": False},
-    {"id": "MN",        "label": "Minnesota (MN)",                         "url": "https://dli.mn.gov/prevailing-wage",                                                                                                            "watch_list": False},
-    {"id": "NJ_RATES",  "label": "New Jersey — PW Rates",                  "url": "https://www.nj.gov/labor/wageandhour/prevailing-rates/public-works/index.shtml",                                                              "watch_list": False},
-    {"id": "NJ_ACT",    "label": "New Jersey — PW Act",                    "url": "https://www.nj.gov/labor/wageandhour/tools-resources/laws/prevailingwageact.shtml",                                                           "watch_list": False},
-    {"id": "NY",        "label": "New York (NY)",                          "url": "https://dol.ny.gov/prevailing-wages",                                                                                                           "watch_list": False},
-    {"id": "NY_BUREAU", "label": "New York — Bureau of Public Work",       "url": "https://dol.ny.gov/bureau-public-work-and-prevailing-wage-enforcement",                                                                        "watch_list": False},
-    {"id": "MI",        "label": "Michigan (MI)",                          "url": "https://www.michigan.gov/leo/bureaus-agencies/ber/wage-and-hour/prevailing-wage",                                                              "watch_list": False},
-    {"id": "DENVER_CO", "label": "Denver, CO (Local)",                     "url": "https://www.denvergov.org/Government/Agencies-Departments-Offices/Agencies-Departments-Offices-Directory/Auditors-Office/Denver-Labor/Prevailing-Wage", "watch_list": False},
+    {"id": "CA",        "label": "California (CA)",                  "url": "https://www.dir.ca.gov/Public-Works/PublicWorks.html",                                                                                                    "watch_list": False},
+    {"id": "NV_PW",     "label": "Nevada — Prevailing Wage",         "url": "https://labor.nv.gov/PrevailingWage/Public_Works___Prevailing_Wages/",                                                                                    "watch_list": False},
+    {"id": "NV_HOME",   "label": "Nevada — Labor Dept",              "url": "https://labor.nv.gov",                                                                                                                                     "watch_list": False},
+    {"id": "WA_POLICY", "label": "Washington — PW Policies",         "url": "https://lni.wa.gov/licensing-permits/public-works-projects/prevailing-wage-policies",                                                                     "watch_list": False},
+    {"id": "WA_RATES",  "label": "Washington — PW Rates",            "url": "https://www.lni.wa.gov/licensing-permits/public-works-projects/prevailing-wage-rates/",                                                                   "watch_list": False},
+    {"id": "MA",        "label": "Massachusetts (MA)",               "url": "https://www.mass.gov/prevailing-wage-program",                                                                                                             "watch_list": False},
+    {"id": "MN",        "label": "Minnesota (MN)",                   "url": "https://dli.mn.gov/prevailing-wage",                                                                                                                       "watch_list": False},
+    {"id": "NJ_RATES",  "label": "New Jersey — PW Rates",            "url": "https://www.nj.gov/labor/wageandhour/prevailing-rates/public-works/index.shtml",                                                                         "watch_list": False},
+    {"id": "NJ_ACT",    "label": "New Jersey — PW Act",              "url": "https://www.nj.gov/labor/wageandhour/tools-resources/laws/prevailingwageact.shtml",                                                                       "watch_list": False},
+    {"id": "NY",        "label": "New York (NY)",                    "url": "https://dol.ny.gov/prevailing-wages",                                                                                                                      "watch_list": False},
+    {"id": "NY_BUREAU", "label": "New York — Bureau of Public Work", "url": "https://dol.ny.gov/bureau-public-work-and-prevailing-wage-enforcement",                                                                                   "watch_list": False},
+    {"id": "MI",        "label": "Michigan (MI)",                    "url": "https://www.michigan.gov/leo/bureaus-agencies/ber/wage-and-hour/prevailing-wage",                                                                         "watch_list": False},
+    {"id": "DENVER_CO", "label": "Denver, CO (Local)",               "url": "https://www.denvergov.org/Government/Agencies-Departments-Offices/Agencies-Departments-Offices-Directory/Auditors-Office/Denver-Labor/Prevailing-Wage",   "watch_list": False},
 ]
 
 WATCH_LIST = [
-    {"id": "VA_LEG",    "label": "Virginia (Legislature)",            "url": "https://lis.virginia.gov",                                                                          "watch_list": True},
-    {"id": "VA_LABOR",  "label": "Virginia (DOLI)",                   "url": "https://doli.virginia.gov/programs/labor-law/prevailing-wage-law/",                                 "watch_list": True},
-    {"id": "NC_LEG",    "label": "North Carolina (Legislature)",      "url": "https://www.ncleg.gov/legislation",                                                                  "watch_list": True},
-    {"id": "NC_LABOR",  "label": "North Carolina (NC DOL)",           "url": "https://www.labor.nc.gov/",                                                                          "watch_list": True},
-    {"id": "AZ_LEG",    "label": "Arizona (Legislature)",             "url": "https://www.azleg.gov/bills/",                                                                       "watch_list": True},
-    {"id": "AZ_LABOR",  "label": "Arizona (ICA)",                     "url": "https://www.azica.gov/",                                                                             "watch_list": True},
-    {"id": "WI_LEG",    "label": "Wisconsin (Legislature)",           "url": "https://legis.wisconsin.gov/",                                                                       "watch_list": True},
-    {"id": "WI_LABOR",  "label": "Wisconsin (DWD)",                   "url": "https://dwd.wisconsin.gov/",                                                                         "watch_list": True},
-    {"id": "WV_LEG",    "label": "West Virginia (Legislature)",       "url": "https://www.wvlegislature.gov/",                                                                     "watch_list": True},
-    {"id": "WV_LABOR",  "label": "West Virginia (Labor Dept)",        "url": "https://labor.wv.gov/",                                                                              "watch_list": True},
-    {"id": "GA_LEG",    "label": "Georgia (Legislature)",             "url": "https://www.legis.ga.gov/",                                                                          "watch_list": True},
-    {"id": "GA_LABOR",  "label": "Georgia (GA DOL)",                  "url": "https://dol.georgia.gov/",                                                                           "watch_list": True},
-    {"id": "TN_LEG",    "label": "Tennessee (Legislature)",           "url": "https://wapp.capitol.tn.gov/apps/billsearch/billsearchadvanced.aspx",                               "watch_list": True},
-    {"id": "TN_LABOR",  "label": "Tennessee (Labor Dept)",            "url": "https://www.tn.gov/workforce/employees/labor-laws/labor-laws-redirect/wages-breaks/prevailing-wage.html", "watch_list": True},
+    {"id": "VA_LEG",   "label": "Virginia (Legislature)",          "url": "https://lis.virginia.gov",                                                                           "watch_list": True},
+    {"id": "VA_LABOR", "label": "Virginia (DOLI)",                 "url": "https://doli.virginia.gov/programs/labor-law/prevailing-wage-law/",                                  "watch_list": True},
+    {"id": "NC_LEG",   "label": "North Carolina (Legislature)",    "url": "https://www.ncleg.gov/legislation",                                                                   "watch_list": True},
+    {"id": "NC_LABOR", "label": "North Carolina (NC DOL)",         "url": "https://www.labor.nc.gov/",                                                                           "watch_list": True},
+    {"id": "AZ_LEG",   "label": "Arizona (Legislature)",           "url": "https://www.azleg.gov/bills/",                                                                        "watch_list": True},
+    {"id": "AZ_LABOR", "label": "Arizona (ICA)",                   "url": "https://www.azica.gov/",                                                                              "watch_list": True},
+    {"id": "WI_LEG",   "label": "Wisconsin (Legislature)",         "url": "https://legis.wisconsin.gov/",                                                                        "watch_list": True},
+    {"id": "WI_LABOR", "label": "Wisconsin (DWD)",                 "url": "https://dwd.wisconsin.gov/",                                                                          "watch_list": True},
+    {"id": "WV_LEG",   "label": "West Virginia (Legislature)",     "url": "https://www.wvlegislature.gov/",                                                                      "watch_list": True},
+    {"id": "WV_LABOR", "label": "West Virginia (Labor Dept)",      "url": "https://labor.wv.gov/",                                                                               "watch_list": True},
+    {"id": "GA_LEG",   "label": "Georgia (Legislature)",           "url": "https://www.legis.ga.gov/",                                                                           "watch_list": True},
+    {"id": "GA_LABOR", "label": "Georgia (GA DOL)",                "url": "https://dol.georgia.gov/",                                                                            "watch_list": True},
+    {"id": "TN_LEG",   "label": "Tennessee (Legislature)",         "url": "https://wapp.capitol.tn.gov/apps/billsearch/billsearchadvanced.aspx",                                "watch_list": True},
+    {"id": "TN_LABOR", "label": "Tennessee (Labor Dept)",          "url": "https://www.tn.gov/workforce/employees/labor-laws/labor-laws-redirect/wages-breaks/prevailing-wage.html", "watch_list": True},
 ]
 
 AGGREGATE_SOURCES = [
-    {"id": "NCSL", "label": "NCSL — National Conference of State Legislatures", "url": "https://www.ncsl.org/labor-and-employment/prevailing-wage-laws", "watch_list": False},
-    {"id": "EPI",  "label": "EPI — Economic Policy Institute",                  "url": "https://www.epi.org/research/prevailing-wage/",                  "watch_list": False},
+    {"id": "NCSL_LABOR", "label": "NCSL — Labor and Employment",       "url": "https://www.ncsl.org/labor-and-employment",                   "watch_list": False},
+    {"id": "NCSL_DC",    "label": "NCSL — In DC (Federal Legislation)","url": "https://www.ncsl.org/in-dc",                                  "watch_list": False},
+    {"id": "EPI_UNIONS", "label": "EPI — Unions and Labor Standards",  "url": "https://www.epi.org/research/unions-and-labor-standards/",    "watch_list": False},
+    {"id": "EPI_WAGES",  "label": "EPI — Wages, Incomes and Wealth",   "url": "https://www.epi.org/research/wages-incomes-and-wealth/",      "watch_list": False},
+    {"id": "EPI_POLICY", "label": "EPI — Policy Watch",                "url": "https://www.epi.org/policywatch/",                            "watch_list": False},
+    {"id": "EPI_IMMIG",  "label": "EPI — Immigration",                 "url": "https://www.epi.org/research/immigration/",                   "watch_list": False},
 ]
 
-ALL_SOURCES = JURISDICTIONS + WATCH_LIST + AGGREGATE_SOURCES  # 29 total
+ALL_SOURCES = JURISDICTIONS + WATCH_LIST + AGGREGATE_SOURCES  # 33 total
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +119,7 @@ def extract_text(html: str) -> str:
 def fetch_page(url: str) -> str:
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "PW-Monitor-Scanner/3.3 (internal compliance tool)"}
+        headers={"User-Agent": "PW-Monitor-Scanner/3.4 (internal compliance tool)"}
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
         return resp.read().decode("utf-8", errors="replace")
@@ -216,11 +212,12 @@ Return this exact JSON structure:
 }}
 
 Rules:
-- relevant = true if the change involves wage rates, coverage rules, thresholds, effective dates, new legislation, repeals, or policy guidance affecting prevailing wage obligations.
+- relevant = true if the change involves wage rates, coverage rules, thresholds, effective dates, new legislation, repeals, policy guidance, Davis-Bacon Act changes, Service Contract Act changes, or federal prevailing wage activity affecting state obligations.
 - relevant = false if the change is a page redesign, navigation update, broken link fix, or unrelated content change.
 - For watch-list states, relevant = true if there is any new bill, adoption signal, ballot initiative, or legislative movement related to prevailing wage.
+- For aggregate national sources, relevant = true if there is any new prevailing wage legislation, federal wage law change, or state adoption activity.
 - impact_level = "High" if it directly affects contract pricing, bid obligations, or legal exposure.
-- impact_level = "Medium" if it requires monitoring but has no immediate contract impact (e.g. proposed legislation).
+- impact_level = "Medium" if it requires monitoring but has no immediate contract impact.
 - impact_level = "Low" if it is administrative or procedural with no substantive rate or coverage change.
 - confidence = "high" if the diff clearly shows a regulatory change.
 - confidence = "medium" if the diff is ambiguous or partial.
@@ -266,14 +263,12 @@ def call_gemini(label: str, url: str, is_watch_list: bool, diff: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
-    sid          = source["id"]
-    url          = source["url"]
-    label        = source["label"]
+    sid           = source["id"]
+    url           = source["url"]
+    label         = source["label"]
     is_watch_list = source.get("watch_list", False)
+    result        = {"id": sid, "label": label, "url": url, "status": "ok", "diff": ""}
 
-    result = {"id": sid, "label": label, "url": url, "status": "ok", "diff": ""}
-
-    # ── Fetch page ──────────────────────────────────────────────────────────
     try:
         html     = fetch_page(url)
         new_text = extract_text(html)
@@ -291,39 +286,25 @@ def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
             "category":           "Administrative / technical update",
             "impact_level":       "Low",
             "title":              f"{label} — Source URL Unreachable ({scan_date})",
-            "summary":            (
-                f"The scanner could not fetch this source URL on {scan_date}. "
-                f"Error: {str(e)}. Visit the URL manually to check if the page has moved. "
-                f"If it has moved, update scanner.py with the new URL and dismiss this item."
-            ),
-            "diff_summary":      "Fetch error — source not monitored",
-            "diff":              "",
-            "gemini_relevant":   None,
-            "gemini_confidence": None,
-            "gemini_summary":    "Not analyzed — fetch failed.",
-            "gemini_impact":     None,
-            "gemini_category":   None,
-            "internal_notes":    "Auto-flagged by scanner: fetch error. Verify URL and update scanner.py if the page has moved.",
-            "reviewer":          "",
-            "reviewed_at":       "",
-            "decision":          "",
-            "decision_notes":    ""
+            "summary":            f"The scanner could not fetch this source URL on {scan_date}. Error: {str(e)}. Visit the URL manually to check if the page has moved. If it has moved, update scanner.py with the new URL and dismiss this item.",
+            "diff_summary":       "Fetch error — source not monitored",
+            "diff":               "",
+            "gemini_relevant":    None, "gemini_confidence": None,
+            "gemini_summary":     "Not analyzed — fetch failed.",
+            "gemini_impact":      None, "gemini_category": None,
+            "internal_notes":     "Auto-flagged by scanner: fetch error. Verify URL and update scanner.py if page has moved.",
+            "reviewer":           "", "reviewed_at": "", "decision": "", "decision_notes": ""
         }
         fb_post("review_queue", queue_item)
         print(f"    -> fetch_error: pushed broken URL item to review queue")
         return result
 
-    # ── Load baseline ────────────────────────────────────────────────────────
     baseline = fb_get(f"baselines/{sid}") or {}
     old_hash = baseline.get("hash", "")
     old_text = baseline.get("text", "")
 
     if not old_hash:
-        fb_put(f"baselines/{sid}", {
-            "hash":      new_hash,
-            "text":      new_text,
-            "stored_at": scan_date
-        })
+        fb_put(f"baselines/{sid}", {"hash": new_hash, "text": new_text, "stored_at": scan_date})
         result["status"] = "baseline_stored"
         return result
 
@@ -331,7 +312,6 @@ def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
         result["status"] = "no_change"
         return result
 
-    # ── Change detected ──────────────────────────────────────────────────────
     diff         = compute_diff(old_text, new_text)
     diff_summary = summarize_diff(diff)
 
@@ -344,103 +324,65 @@ def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
 
     if gemini is None:
         queue_item = {
-            "jurisdiction_id":    sid,
-            "jurisdiction_label": label,
-            "url":                url,
-            "detected_at":        scan_date,
-            "status":             "pending",
-            "source":             "auto_scanner",
-            "category":           "Rate change",
-            "impact_level":       "Medium",
+            "jurisdiction_id":    sid, "jurisdiction_label": label, "url": url,
+            "detected_at":        scan_date, "status": "pending", "source": "auto_scanner",
+            "category":           "Rate change", "impact_level": "Medium",
             "title":              f"{label} — Page Updated {scan_date}",
-            "summary":            (
-                f"Automated scan detected a change on the {label} page. "
-                f"Gemini AI analysis failed (check API key or rate limit). "
-                f"Review the source link manually before approving."
-            ),
-            "diff_summary":      diff_summary,
-            "diff":              diff,
-            "gemini_relevant":   None,
-            "gemini_confidence": "low",
-            "gemini_summary":    "Gemini analysis failed (HTTP Error 429 or API error). Review manually.",
-            "gemini_impact":     None,
-            "gemini_category":   None,
-            "internal_notes":    "Gemini analysis failed. Treat confidence as LOW. Visit source link and review manually.",
-            "reviewer":          "",
-            "reviewed_at":       "",
-            "decision":          "",
-            "decision_notes":    ""
+            "summary":            f"Automated scan detected a change on the {label} page. Gemini AI analysis failed. Review the source link manually before approving.",
+            "diff_summary":       diff_summary, "diff": diff,
+            "gemini_relevant":    None, "gemini_confidence": "low",
+            "gemini_summary":     "Gemini analysis failed (HTTP Error 429 or API error). Review manually.",
+            "gemini_impact":      None, "gemini_category": None,
+            "internal_notes":     "Gemini analysis failed. Treat confidence as LOW. Visit source link and review manually.",
+            "reviewer":           "", "reviewed_at": "", "decision": "", "decision_notes": ""
         }
         fb_post("review_queue", queue_item)
-        result["status"]       = "change_detected_gemini_failed"
+        result["status"] = "change_detected_gemini_failed"
         result["diff_summary"] = diff_summary
         print(f"    -> Gemini failed. Item pushed to review queue with low confidence.")
 
     elif not gemini.get("relevant", False):
         archive_item = {
-            "jurisdiction_id":    sid,
-            "jurisdiction_label": label,
-            "url":                url,
-            "detected_at":        scan_date,
-            "status":             "dismissed",
-            "source":             "auto_scanner",
+            "jurisdiction_id":    sid, "jurisdiction_label": label, "url": url,
+            "detected_at":        scan_date, "status": "dismissed", "source": "auto_scanner",
             "category":           gemini.get("category", "Administrative / technical update"),
             "impact_level":       gemini.get("impact_level", "Low"),
             "title":              f"{label} — Non-Relevant Change {scan_date}",
             "summary":            gemini.get("summary", "Auto-dismissed as non-relevant."),
-            "diff_summary":       diff_summary,
-            "diff":               diff,
-            "gemini_relevant":    False,
-            "gemini_confidence":  gemini.get("confidence", "low"),
-            "gemini_summary":     gemini.get("summary", ""),
-            "gemini_impact":      gemini.get("impact_level", "Low"),
+            "diff_summary":       diff_summary, "diff": diff,
+            "gemini_relevant":    False, "gemini_confidence": gemini.get("confidence", "low"),
+            "gemini_summary":     gemini.get("summary", ""), "gemini_impact": gemini.get("impact_level", "Low"),
             "gemini_category":    gemini.get("category", ""),
             "internal_notes":     "Auto-dismissed by Gemini AI as non-relevant.",
-            "reviewer":           "auto_scanner",
-            "reviewed_at":        scan_date,
-            "decision":           "dismissed",
+            "reviewer":           "auto_scanner", "reviewed_at": scan_date, "decision": "dismissed",
             "decision_notes":     f"Auto-dismissed. Gemini confidence: {gemini.get('confidence', 'unknown')}."
         }
         fb_post("archive", archive_item)
-        result["status"]       = "auto_dismissed"
+        result["status"] = "auto_dismissed"
         result["diff_summary"] = diff_summary
         print(f"    -> Non-relevant (confidence: {gemini.get('confidence')}). Auto-dismissed to archive.")
 
     else:
         queue_item = {
-            "jurisdiction_id":    sid,
-            "jurisdiction_label": label,
-            "url":                url,
-            "detected_at":        scan_date,
-            "status":             "pending",
-            "source":             "auto_scanner",
+            "jurisdiction_id":    sid, "jurisdiction_label": label, "url": url,
+            "detected_at":        scan_date, "status": "pending", "source": "auto_scanner",
             "category":           gemini.get("category", "Rate change"),
             "impact_level":       gemini.get("impact_level", "Medium"),
             "title":              f"{label} — Page Updated {scan_date}",
             "summary":            gemini.get("summary", "Review the source link and summarize what changed before approving."),
-            "diff_summary":       diff_summary,
-            "diff":               diff,
-            "gemini_relevant":    True,
-            "gemini_confidence":  gemini.get("confidence", "medium"),
-            "gemini_summary":     gemini.get("summary", ""),
-            "gemini_impact":      gemini.get("impact_level", "Medium"),
+            "diff_summary":       diff_summary, "diff": diff,
+            "gemini_relevant":    True, "gemini_confidence": gemini.get("confidence", "medium"),
+            "gemini_summary":     gemini.get("summary", ""), "gemini_impact": gemini.get("impact_level", "Medium"),
             "gemini_category":    gemini.get("category", ""),
             "internal_notes":     f"Auto-flagged by scanner. Gemini confidence: {gemini.get('confidence', 'unknown')}. Edit summary before approving.",
-            "reviewer":           "",
-            "reviewed_at":        "",
-            "decision":           "",
-            "decision_notes":     ""
+            "reviewer":           "", "reviewed_at": "", "decision": "", "decision_notes": ""
         }
         fb_post("review_queue", queue_item)
-        result["status"]       = "change_detected"
+        result["status"] = "change_detected"
         result["diff_summary"] = diff_summary
         print(f"    -> Relevant (confidence: {gemini.get('confidence')}, impact: {gemini.get('impact_level')}). Pushed to review queue.")
 
-    fb_put(f"baselines/{sid}", {
-        "hash":      new_hash,
-        "text":      new_text,
-        "stored_at": scan_date
-    })
+    fb_put(f"baselines/{sid}", {"hash": new_hash, "text": new_text, "stored_at": scan_date})
     result["diff"] = diff
     return result
 
@@ -450,11 +392,11 @@ def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
 # ---------------------------------------------------------------------------
 
 def main():
-    scan_date          = datetime.datetime.utcnow().strftime("%Y-%m-%d")
-    log                = {"date": scan_date, "results": []}
-    gemini_call_count  = [0]
+    scan_date         = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    log               = {"date": scan_date, "results": []}
+    gemini_call_count = [0]
 
-    print(f"PW Monitor Scanner v3.3 — {scan_date}")
+    print(f"PW Monitor Scanner v3.4 — {scan_date}")
     print(f"Scanning {len(ALL_SOURCES)} sources...\n")
 
     for source in ALL_SOURCES:
@@ -501,12 +443,10 @@ def main():
         print("\nRelevant changes pushed to review queue:")
         for r in changed:
             print(f"  {r['id']}: {r['diff_summary']}")
-
     if gemini_failed:
-        print("\nGemini failed (pushed to queue with low confidence — review manually):")
+        print("\nGemini failed (review manually):")
         for r in gemini_failed:
             print(f"  {r['id']}")
-
     if errors:
         print("\nFetch errors (broken URL items pushed to review queue):")
         for r in errors:
