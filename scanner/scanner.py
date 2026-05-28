@@ -1,12 +1,13 @@
 """
 PW Monitor — Prevailing Wage Page Scanner
-Version 3.4 | May 2026
+Version 3.5 | May 2026
 
-Changes from v3.3:
-- Aggregate sources updated: old NCSL and EPI URLs replaced
-- NCSL now monitored at two URLs (labor-and-employment + in-dc)
-- EPI now monitored at four URLs (unions-and-labor-standards, wages-incomes-and-wealth, policywatch, immigration)
-- Total monitored sources: 33 (13 active + 14 watch-list + 6 aggregate)
+Changes from v3.4:
+- Scanner now writes all items to Firebase 'changes' node to match frontend
+- Field names remapped to match frontend schema (impact_level->impact, detected_at->date, etc.)
+- State abbreviations used instead of full labels for frontend filter compatibility
+- Auto-dismissed items written to 'changes' with status 'dismissed' (visible in archive)
+- Rolling 7-day digest filter supported by correct 'reviewed' field on dismissed items
 """
 
 import os
@@ -34,6 +35,46 @@ GEMINI_URL = (
 )
 
 GEMINI_DELAY_SECONDS = 5
+
+# Maps jurisdiction ID to the state abbreviation used in the frontend
+STATE_MAP = {
+    "CA":        "CA",
+    "NV_PW":     "NV",
+    "NV_HOME":   "NV",
+    "WA_POLICY": "WA",
+    "WA_RATES":  "WA",
+    "MA":        "MA",
+    "MN":        "MN",
+    "NJ_RATES":  "NJ",
+    "NJ_ACT":    "NJ",
+    "NY":        "NY",
+    "NY_BUREAU": "NY",
+    "MI":        "MI",
+    "DENVER_CO": "Denver, CO",
+    "VA_LEG":    "VA",
+    "VA_LABOR":  "VA",
+    "NC_LEG":    "NC",
+    "NC_LABOR":  "NC",
+    "AZ_LEG":    "AZ",
+    "AZ_LABOR":  "AZ",
+    "WI_LEG":    "WI",
+    "WI_LABOR":  "WI",
+    "WV_LEG":    "WV",
+    "WV_LABOR":  "WV",
+    "GA_LEG":    "GA",
+    "GA_LABOR":  "GA",
+    "TN_LEG":    "TN",
+    "TN_LABOR":  "TN",
+    "NCSL_LABOR": "NCSL",
+    "NCSL_DC":   "NCSL",
+    "EPI_UNIONS": "EPI",
+    "EPI_WAGES": "EPI",
+    "EPI_POLICY": "EPI",
+    "EPI_IMMIG": "EPI",
+}
+
+# IDs where isLocal should be true
+LOCAL_IDS = {"DENVER_CO"}
 
 JURISDICTIONS = [
     {"id": "CA",        "label": "California (CA)",                  "url": "https://www.dir.ca.gov/Public-Works/PublicWorks.html",                                                                                                    "watch_list": False},
@@ -119,7 +160,7 @@ def extract_text(html: str) -> str:
 def fetch_page(url: str) -> str:
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "PW-Monitor-Scanner/3.4 (internal compliance tool)"}
+        headers={"User-Agent": "PW-Monitor-Scanner/3.5 (internal compliance tool)"}
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
         return resp.read().decode("utf-8", errors="replace")
@@ -267,6 +308,8 @@ def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
     url           = source["url"]
     label         = source["label"]
     is_watch_list = source.get("watch_list", False)
+    state         = STATE_MAP.get(sid, sid)
+    is_local      = sid in LOCAL_IDS
     result        = {"id": sid, "label": label, "url": url, "status": "ok", "diff": ""}
 
     try:
@@ -276,27 +319,27 @@ def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
     except Exception as e:
         result["status"] = "fetch_error"
         result["error"]  = str(e)
-        queue_item = {
-            "jurisdiction_id":    sid,
-            "jurisdiction_label": label,
-            "url":                url,
-            "detected_at":        scan_date,
-            "status":             "pending",
-            "source":             "auto_scanner",
-            "category":           "Administrative / technical update",
-            "impact_level":       "Low",
-            "title":              f"{label} — Source URL Unreachable ({scan_date})",
-            "summary":            f"The scanner could not fetch this source URL on {scan_date}. Error: {str(e)}. Visit the URL manually to check if the page has moved. If it has moved, update scanner.py with the new URL and dismiss this item.",
-            "diff_summary":       "Fetch error — source not monitored",
-            "diff":               "",
-            "gemini_relevant":    None, "gemini_confidence": None,
-            "gemini_summary":     "Not analyzed — fetch failed.",
-            "gemini_impact":      None, "gemini_category": None,
-            "internal_notes":     "Auto-flagged by scanner: fetch error. Verify URL and update scanner.py if page has moved.",
-            "reviewer":           "", "reviewed_at": "", "decision": "", "decision_notes": ""
+        # Write broken URL item to 'changes' node so frontend queue shows it
+        change_item = {
+            "state":         state,
+            "title":         f"{label} — Source URL Unreachable ({scan_date})",
+            "category":      "Administrative update",
+            "impact":        "Low",
+            "type":          "Enacted",
+            "summary":       f"The scanner could not fetch this source URL on {scan_date}. Error: {str(e)}. Visit the URL manually to check if the page has moved. If it has moved, update scanner.py with the new URL and dismiss this item.",
+            "source":        url,
+            "date":          scan_date,
+            "effectiveDate": "N/A",
+            "status":        "pending",
+            "reviewer":      "",
+            "notes":         "Auto-flagged by scanner: fetch error. Verify URL and update scanner.py if page has moved.",
+            "reviewed":      None,
+            "isLocal":       is_local,
+            "isFederal":     False,
+            "autoDetected":  True,
         }
-        fb_post("review_queue", queue_item)
-        print(f"    -> fetch_error: pushed broken URL item to review queue")
+        fb_post("changes", change_item)
+        print(f"    -> fetch_error: pushed broken URL item to changes (queue)")
         return result
 
     baseline = fb_get(f"baselines/{sid}") or {}
@@ -323,64 +366,79 @@ def scan_source(source: dict, scan_date: str, gemini_call_count: list) -> dict:
     gemini = call_gemini(label, url, is_watch_list, diff)
 
     if gemini is None:
-        queue_item = {
-            "jurisdiction_id":    sid, "jurisdiction_label": label, "url": url,
-            "detected_at":        scan_date, "status": "pending", "source": "auto_scanner",
-            "category":           "Rate change", "impact_level": "Medium",
-            "title":              f"{label} — Page Updated {scan_date}",
-            "summary":            f"Automated scan detected a change on the {label} page. Gemini AI analysis failed. Review the source link manually before approving.",
-            "diff_summary":       diff_summary, "diff": diff,
-            "gemini_relevant":    None, "gemini_confidence": "low",
-            "gemini_summary":     "Gemini analysis failed (HTTP Error 429 or API error). Review manually.",
-            "gemini_impact":      None, "gemini_category": None,
-            "internal_notes":     "Gemini analysis failed. Treat confidence as LOW. Visit source link and review manually.",
-            "reviewer":           "", "reviewed_at": "", "decision": "", "decision_notes": ""
+        # Gemini failed — push to queue for manual review
+        change_item = {
+            "state":         state,
+            "title":         f"{label} — Page Updated {scan_date}",
+            "category":      "Rate change",
+            "impact":        "Medium",
+            "type":          "Enacted",
+            "summary":       f"Automated scan detected a change on {label}. Gemini AI analysis failed (HTTP 429 or API error). Review the source link manually before approving.",
+            "source":        url,
+            "date":          scan_date,
+            "effectiveDate": "Review required",
+            "status":        "pending",
+            "reviewer":      "",
+            "notes":         "Gemini analysis failed. Treat confidence as LOW. Visit source link and review manually.",
+            "reviewed":      None,
+            "isLocal":       is_local,
+            "isFederal":     False,
+            "autoDetected":  True,
         }
-        fb_post("review_queue", queue_item)
+        fb_post("changes", change_item)
         result["status"] = "change_detected_gemini_failed"
         result["diff_summary"] = diff_summary
-        print(f"    -> Gemini failed. Item pushed to review queue with low confidence.")
+        print(f"    -> Gemini failed. Item pushed to changes (queue) with low confidence.")
 
     elif not gemini.get("relevant", False):
-        archive_item = {
-            "jurisdiction_id":    sid, "jurisdiction_label": label, "url": url,
-            "detected_at":        scan_date, "status": "dismissed", "source": "auto_scanner",
-            "category":           gemini.get("category", "Administrative / technical update"),
-            "impact_level":       gemini.get("impact_level", "Low"),
-            "title":              f"{label} — Non-Relevant Change {scan_date}",
-            "summary":            gemini.get("summary", "Auto-dismissed as non-relevant."),
-            "diff_summary":       diff_summary, "diff": diff,
-            "gemini_relevant":    False, "gemini_confidence": gemini.get("confidence", "low"),
-            "gemini_summary":     gemini.get("summary", ""), "gemini_impact": gemini.get("impact_level", "Low"),
-            "gemini_category":    gemini.get("category", ""),
-            "internal_notes":     "Auto-dismissed by Gemini AI as non-relevant.",
-            "reviewer":           "auto_scanner", "reviewed_at": scan_date, "decision": "dismissed",
-            "decision_notes":     f"Auto-dismissed. Gemini confidence: {gemini.get('confidence', 'unknown')}."
+        # Non-relevant — write to 'changes' as dismissed so archive shows it
+        change_item = {
+            "state":         state,
+            "title":         f"{label} — Non-Relevant Change {scan_date}",
+            "category":      gemini.get("category", "Administrative update"),
+            "impact":        gemini.get("impact_level", "Low"),
+            "type":          "Enacted",
+            "summary":       gemini.get("summary", "Auto-dismissed as non-relevant."),
+            "source":        url,
+            "date":          scan_date,
+            "effectiveDate": "N/A",
+            "status":        "dismissed",
+            "reviewer":      "auto_scanner",
+            "notes":         f"Auto-dismissed by Gemini AI. Confidence: {gemini.get('confidence', 'unknown')}.",
+            "reviewed":      scan_date,
+            "isLocal":       is_local,
+            "isFederal":     False,
+            "autoDetected":  True,
         }
-        fb_post("archive", archive_item)
+        fb_post("changes", change_item)
         result["status"] = "auto_dismissed"
         result["diff_summary"] = diff_summary
-        print(f"    -> Non-relevant (confidence: {gemini.get('confidence')}). Auto-dismissed to archive.")
+        print(f"    -> Non-relevant (confidence: {gemini.get('confidence')}). Auto-dismissed to changes (archive).")
 
     else:
-        queue_item = {
-            "jurisdiction_id":    sid, "jurisdiction_label": label, "url": url,
-            "detected_at":        scan_date, "status": "pending", "source": "auto_scanner",
-            "category":           gemini.get("category", "Rate change"),
-            "impact_level":       gemini.get("impact_level", "Medium"),
-            "title":              f"{label} — Page Updated {scan_date}",
-            "summary":            gemini.get("summary", "Review the source link and summarize what changed before approving."),
-            "diff_summary":       diff_summary, "diff": diff,
-            "gemini_relevant":    True, "gemini_confidence": gemini.get("confidence", "medium"),
-            "gemini_summary":     gemini.get("summary", ""), "gemini_impact": gemini.get("impact_level", "Medium"),
-            "gemini_category":    gemini.get("category", ""),
-            "internal_notes":     f"Auto-flagged by scanner. Gemini confidence: {gemini.get('confidence', 'unknown')}. Edit summary before approving.",
-            "reviewer":           "", "reviewed_at": "", "decision": "", "decision_notes": ""
+        # Relevant — push to queue for human review
+        change_item = {
+            "state":         state,
+            "title":         f"{label} — Page Updated {scan_date}",
+            "category":      gemini.get("category", "Rate change"),
+            "impact":        gemini.get("impact_level", "Medium"),
+            "type":          "Enacted",
+            "summary":       gemini.get("summary", "Review the source link and summarize what changed before approving."),
+            "source":        url,
+            "date":          scan_date,
+            "effectiveDate": "Review required",
+            "status":        "pending",
+            "reviewer":      "",
+            "notes":         f"Auto-flagged by scanner. Gemini confidence: {gemini.get('confidence', 'unknown')}. Edit summary before approving.",
+            "reviewed":      None,
+            "isLocal":       is_local,
+            "isFederal":     False,
+            "autoDetected":  True,
         }
-        fb_post("review_queue", queue_item)
+        fb_post("changes", change_item)
         result["status"] = "change_detected"
         result["diff_summary"] = diff_summary
-        print(f"    -> Relevant (confidence: {gemini.get('confidence')}, impact: {gemini.get('impact_level')}). Pushed to review queue.")
+        print(f"    -> Relevant (confidence: {gemini.get('confidence')}, impact: {gemini.get('impact_level')}). Pushed to changes (queue).")
 
     fb_put(f"baselines/{sid}", {"hash": new_hash, "text": new_text, "stored_at": scan_date})
     result["diff"] = diff
@@ -396,7 +454,7 @@ def main():
     log               = {"date": scan_date, "results": []}
     gemini_call_count = [0]
 
-    print(f"PW Monitor Scanner v3.4 — {scan_date}")
+    print(f"PW Monitor Scanner v3.5 — {scan_date}")
     print(f"Scanning {len(ALL_SOURCES)} sources...\n")
 
     for source in ALL_SOURCES:
