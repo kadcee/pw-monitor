@@ -1,13 +1,10 @@
 """
 PW Monitor — Prevailing Wage Page Scanner
-Version 3.5 | May 2026
+Version 3.6 | May 2026
 
-Changes from v3.4:
-- Scanner now writes all items to Firebase 'changes' node to match frontend
-- Field names remapped to match frontend schema (impact_level->impact, detected_at->date, etc.)
-- State abbreviations used instead of full labels for frontend filter compatibility
-- Auto-dismissed items written to 'changes' with status 'dismissed' (visible in archive)
-- Rolling 7-day digest filter supported by correct 'reviewed' field on dismissed items
+Changes from v3.5:
+- fetch_page now sends browser-like headers to prevent 403 blocks from state agency sites
+- NY source URL updated to apps.labor.ny.gov prevailing wage changes page
 """
 
 import os
@@ -86,7 +83,7 @@ JURISDICTIONS = [
     {"id": "MN",        "label": "Minnesota (MN)",                   "url": "https://dli.mn.gov/prevailing-wage",                                                                                                                       "watch_list": False},
     {"id": "NJ_RATES",  "label": "New Jersey — PW Rates",            "url": "https://www.nj.gov/labor/wageandhour/prevailing-rates/public-works/index.shtml",                                                                         "watch_list": False},
     {"id": "NJ_ACT",    "label": "New Jersey — PW Act",              "url": "https://www.nj.gov/labor/wageandhour/tools-resources/laws/prevailingwageact.shtml",                                                                       "watch_list": False},
-    {"id": "NY",        "label": "New York (NY)",                    "url": "https://dol.ny.gov/prevailing-wages",                                                                                                                      "watch_list": False},
+    {"id": "NY",        "label": "New York (NY)",                    "url": "https://apps.labor.ny.gov/wpp/publicViewPWChanges.do?method=showIt#",                                                                                                                      "watch_list": False},
     {"id": "NY_BUREAU", "label": "New York — Bureau of Public Work", "url": "https://dol.ny.gov/bureau-public-work-and-prevailing-wage-enforcement",                                                                                   "watch_list": False},
     {"id": "MI",        "label": "Michigan (MI)",                    "url": "https://www.michigan.gov/leo/bureaus-agencies/ber/wage-and-hour/prevailing-wage",                                                                         "watch_list": False},
     {"id": "DENVER_CO", "label": "Denver, CO (Local)",               "url": "https://www.denvergov.org/Government/Agencies-Departments-Offices/Agencies-Departments-Offices-Directory/Auditors-Office/Denver-Labor/Prevailing-Wage",   "watch_list": False},
@@ -160,10 +157,18 @@ def extract_text(html: str) -> str:
 def fetch_page(url: str) -> str:
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "PW-Monitor-Scanner/3.5 (internal compliance tool)"}
+        headers={
+            "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection":      "keep-alive",
+        }
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
-        return resp.read().decode("utf-8", errors="replace")
+        raw = resp.read()
+        encoding = resp.headers.get_content_charset() or "utf-8"
+        return raw.decode(encoding, errors="replace")
 
 
 def compute_hash(text: str) -> str:
@@ -454,7 +459,7 @@ def main():
     log               = {"date": scan_date, "results": []}
     gemini_call_count = [0]
 
-    print(f"PW Monitor Scanner v3.5 — {scan_date}")
+    print(f"PW Monitor Scanner v3.6 — {scan_date}")
     print(f"Scanning {len(ALL_SOURCES)} sources...\n")
 
     for source in ALL_SOURCES:
