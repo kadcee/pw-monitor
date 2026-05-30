@@ -1,16 +1,13 @@
 """
 PW Monitor — Prevailing Wage Page Scanner
-Version 3.7 | May 2026
+Version 3.8 | May 2026
 
-Changes from v3.6:
-- fetch_page now retries without headers if first attempt returns 403,
-  fixing sites that block browser-like headers (mass.gov, azica.gov, tn.gov)
-- Removed Accept-Encoding header to prevent compressed binary responses
-  that urllib cannot decompress, fixing garbled diffs (WA_RATES, NC_LEG)
-- EPI sources removed from automated scan; EPI blocks all automated requests.
-  EPI is now a manual monthly check. Total sources: 29.
-- Gemini delay increased from 5s to 10s and retry logic added on 429 errors
-  to reduce rate limit failures
+Changes from v3.7:
+- AZ_LABOR (azica.gov) removed; AZ ICA monitors minimum wage, not prevailing
+  wage. AZ_LEG already covers legislative activity. AZ blocked automated access.
+- TN_LABOR URL updated to Tennessee Prevailing Wage Commission page
+- AGC and ABC prevailing wage pages added as aggregate sources; more targeted
+  replacements for EPI. Total sources: 30.
 """
 
 import os
@@ -61,7 +58,6 @@ STATE_MAP = {
     "NC_LEG":    "NC",
     "NC_LABOR":  "NC",
     "AZ_LEG":    "AZ",
-    "AZ_LABOR":  "AZ",
     "WI_LEG":    "WI",
     "WI_LABOR":  "WI",
     "WV_LEG":    "WV",
@@ -72,6 +68,8 @@ STATE_MAP = {
     "TN_LABOR":  "TN",
     "NCSL_LABOR": "NCSL",
     "NCSL_DC":   "NCSL",
+    "AGC":       "AGC",
+    "ABC":       "ABC",
 }
 
 # IDs where isLocal should be true
@@ -99,7 +97,6 @@ WATCH_LIST = [
     {"id": "NC_LEG",   "label": "North Carolina (Legislature)",    "url": "https://www.ncleg.gov/legislation",                                                                   "watch_list": True},
     {"id": "NC_LABOR", "label": "North Carolina (NC DOL)",         "url": "https://www.labor.nc.gov/",                                                                           "watch_list": True},
     {"id": "AZ_LEG",   "label": "Arizona (Legislature)",           "url": "https://www.azleg.gov/bills/",                                                                        "watch_list": True},
-    {"id": "AZ_LABOR", "label": "Arizona (ICA)",                   "url": "https://www.azica.gov/",                                                                              "watch_list": True},
     {"id": "WI_LEG",   "label": "Wisconsin (Legislature)",         "url": "https://legis.wisconsin.gov/",                                                                        "watch_list": True},
     {"id": "WI_LABOR", "label": "Wisconsin (DWD)",                 "url": "https://dwd.wisconsin.gov/",                                                                          "watch_list": True},
     {"id": "WV_LEG",   "label": "West Virginia (Legislature)",     "url": "https://www.wvlegislature.gov/",                                                                      "watch_list": True},
@@ -107,15 +104,17 @@ WATCH_LIST = [
     {"id": "GA_LEG",   "label": "Georgia (Legislature)",           "url": "https://www.legis.ga.gov/",                                                                           "watch_list": True},
     {"id": "GA_LABOR", "label": "Georgia (GA DOL)",                "url": "https://dol.georgia.gov/",                                                                            "watch_list": True},
     {"id": "TN_LEG",   "label": "Tennessee (Legislature)",         "url": "https://wapp.capitol.tn.gov/apps/billsearch/billsearchadvanced.aspx",                                "watch_list": True},
-    {"id": "TN_LABOR", "label": "Tennessee (Labor Dept)",          "url": "https://www.tn.gov/workforce/employees/labor-laws/labor-laws-redirect/wages-breaks/prevailing-wage.html", "watch_list": True},
+    {"id": "TN_LABOR", "label": "Tennessee (Prevailing Wage Commission)", "url": "https://www.tn.gov/workforce/contact-the-department0/boards---commissions/boards---commissions-redirect/prevailing-wage-commission.html", "watch_list": True},
 ]
 
 AGGREGATE_SOURCES = [
-    {"id": "NCSL_LABOR", "label": "NCSL — Labor and Employment",       "url": "https://www.ncsl.org/labor-and-employment",                   "watch_list": False},
-    {"id": "NCSL_DC",    "label": "NCSL — In DC (Federal Legislation)","url": "https://www.ncsl.org/in-dc",                                  "watch_list": False},
+    {"id": "NCSL_LABOR", "label": "NCSL — Labor and Employment",       "url": "https://www.ncsl.org/labor-and-employment",                        "watch_list": False},
+    {"id": "NCSL_DC",    "label": "NCSL — In DC (Federal Legislation)","url": "https://www.ncsl.org/in-dc",                                       "watch_list": False},
+    {"id": "AGC",        "label": "AGC — Prevailing Wage",             "url": "https://www.agc.org/learn/construction-data/labor-relations/prevailing-wage", "watch_list": False},
+    {"id": "ABC",        "label": "ABC — Prevailing Wage",             "url": "https://www.abc.org/Politics-Policy/Federal-Issues/Prevailing-Wage", "watch_list": False},
 ]
 
-ALL_SOURCES = JURISDICTIONS + WATCH_LIST + AGGREGATE_SOURCES  # 29 total (EPI moved to manual monthly check)
+ALL_SOURCES = JURISDICTIONS + WATCH_LIST + AGGREGATE_SOURCES  # 30 total
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +471,7 @@ def main():
     log               = {"date": scan_date, "results": []}
     gemini_call_count = [0]
 
-    print(f"PW Monitor Scanner v3.7 — {scan_date}")
+    print(f"PW Monitor Scanner v3.8 — {scan_date}")
     print(f"Scanning {len(ALL_SOURCES)} sources...\n")
 
     for source in ALL_SOURCES:
