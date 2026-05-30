@@ -1,10 +1,16 @@
 """
 PW Monitor — Prevailing Wage Page Scanner
-Version 3.6 | May 2026
+Version 3.7 | May 2026
 
-Changes from v3.5:
-- fetch_page now sends browser-like headers to prevent 403 blocks from state agency sites
-- NY source URL updated to apps.labor.ny.gov prevailing wage changes page
+Changes from v3.6:
+- fetch_page now retries without headers if first attempt returns 403,
+  fixing sites that block browser-like headers (mass.gov, azica.gov, tn.gov)
+- Removed Accept-Encoding header to prevent compressed binary responses
+  that urllib cannot decompress, fixing garbled diffs (WA_RATES, NC_LEG)
+- EPI sources removed from automated scan; EPI blocks all automated requests.
+  EPI is now a manual monthly check. Total sources: 29.
+- Gemini delay increased from 5s to 10s and retry logic added on 429 errors
+  to reduce rate limit failures
 """
 
 import os
@@ -31,7 +37,9 @@ GEMINI_URL = (
     f"gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
 )
 
-GEMINI_DELAY_SECONDS = 5
+GEMINI_DELAY_SECONDS = 10
+GEMINI_MAX_RETRIES  = 3
+GEMINI_RETRY_DELAY  = 30  # seconds to wait after a 429
 
 # Maps jurisdiction ID to the state abbreviation used in the frontend
 STATE_MAP = {
@@ -64,10 +72,6 @@ STATE_MAP = {
     "TN_LABOR":  "TN",
     "NCSL_LABOR": "NCSL",
     "NCSL_DC":   "NCSL",
-    "EPI_UNIONS": "EPI",
-    "EPI_WAGES": "EPI",
-    "EPI_POLICY": "EPI",
-    "EPI_IMMIG": "EPI",
 }
 
 # IDs where isLocal should be true
@@ -109,13 +113,9 @@ WATCH_LIST = [
 AGGREGATE_SOURCES = [
     {"id": "NCSL_LABOR", "label": "NCSL — Labor and Employment",       "url": "https://www.ncsl.org/labor-and-employment",                   "watch_list": False},
     {"id": "NCSL_DC",    "label": "NCSL — In DC (Federal Legislation)","url": "https://www.ncsl.org/in-dc",                                  "watch_list": False},
-    {"id": "EPI_UNIONS", "label": "EPI — Unions and Labor Standards",  "url": "https://www.epi.org/research/unions-and-labor-standards/",    "watch_list": False},
-    {"id": "EPI_WAGES",  "label": "EPI — Wages, Incomes and Wealth",   "url": "https://www.epi.org/research/wages-incomes-and-wealth/",      "watch_list": False},
-    {"id": "EPI_POLICY", "label": "EPI — Policy Watch",                "url": "https://www.epi.org/policywatch/",                            "watch_list": False},
-    {"id": "EPI_IMMIG",  "label": "EPI — Immigration",                 "url": "https://www.epi.org/research/immigration/",                   "watch_list": False},
 ]
 
-ALL_SOURCES = JURISDICTIONS + WATCH_LIST + AGGREGATE_SOURCES  # 33 total
+ALL_SOURCES = JURISDICTIONS + WATCH_LIST + AGGREGATE_SOURCES  # 29 total (EPI moved to manual monthly check)
 
 
 # ---------------------------------------------------------------------------
@@ -155,20 +155,27 @@ def extract_text(html: str) -> str:
 
 
 def fetch_page(url: str) -> str:
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection":      "keep-alive",
-        }
-    )
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        raw = resp.read()
-        encoding = resp.headers.get_content_charset() or "utf-8"
-        return raw.decode(encoding, errors="replace")
+    """Fetch a page with browser-like headers. If the server returns 403,
+    retry without custom headers — some government sites block browser UA strings."""
+    browser_headers = {
+        "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection":      "keep-alive",
+    }
+    for headers in (browser_headers, {}):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                raw = resp.read()
+                encoding = resp.headers.get_content_charset() or "utf-8"
+                return raw.decode(encoding, errors="replace")
+        except urllib.error.HTTPError as e:
+            if e.code == 403 and headers:
+                print(f"    -> 403 with headers, retrying without headers...")
+                continue
+            raise
+    raise urllib.error.HTTPError(url, 403, "403 with and without headers", {}, None)
 
 
 def compute_hash(text: str) -> str:
@@ -290,18 +297,24 @@ def call_gemini(label: str, url: str, is_watch_list: bool, diff: str) -> dict:
         GEMINI_URL, data=data, method="POST",
         headers={"Content-Type": "application/json"}
     )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read())
-        raw_text = result["candidates"][0]["content"]["parts"][0]["text"]
-        clean    = raw_text.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-        return json.loads(clean)
-    except urllib.error.HTTPError as e:
-        print(f"    Gemini HTTP error: {e.code} {e.reason}")
-        return None
-    except Exception as e:
-        print(f"    Gemini error: {e}")
-        return None
+    for attempt in range(1, GEMINI_MAX_RETRIES + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read())
+            raw_text = result["candidates"][0]["content"]["parts"][0]["text"]
+            clean    = raw_text.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+            return json.loads(clean)
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < GEMINI_MAX_RETRIES:
+                print(f"    Gemini 429 rate limit (attempt {attempt}/{GEMINI_MAX_RETRIES}). Waiting {GEMINI_RETRY_DELAY}s...")
+                time.sleep(GEMINI_RETRY_DELAY)
+                continue
+            print(f"    Gemini HTTP error: {e.code} {e.reason}")
+            return None
+        except Exception as e:
+            print(f"    Gemini error: {e}")
+            return None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +472,7 @@ def main():
     log               = {"date": scan_date, "results": []}
     gemini_call_count = [0]
 
-    print(f"PW Monitor Scanner v3.6 — {scan_date}")
+    print(f"PW Monitor Scanner v3.7 — {scan_date}")
     print(f"Scanning {len(ALL_SOURCES)} sources...\n")
 
     for source in ALL_SOURCES:
