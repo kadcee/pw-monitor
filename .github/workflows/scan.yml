@@ -25,4 +25,4 @@ jobs:
           FIREBASE_DATABASE_URL: ${{ secrets.FIREBASE_DATABASE_URL }}
           FIREBASE_SECRET: ${{ secrets.FIREBASE_SECRET }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python scanner/scanner.py
+        run: python scanner.py
