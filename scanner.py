@@ -13,6 +13,8 @@ Changes from v3.9 (minor):
 - Tennessee removed from watch list entirely. HB2541 applies only to highway
   construction; Honeywell does not perform highway construction work.
   TN_LEG and TN_LABOR removed. Total sources: 28.
+- CA_RATES, MN_NOTIFY, MI_COUNTY added as second URLs for CA, MN, and MI
+  respectively. Total sources: 31.
 """
 
 import os
@@ -46,17 +48,20 @@ GEMINI_RETRY_DELAY  = 30  # seconds to wait after a 429
 # Maps jurisdiction ID to the state abbreviation used in the frontend
 STATE_MAP = {
     "CA":        "CA",
+    "CA_RATES":  "CA",
     "NV_PW":     "NV",
     "NV_HOME":   "NV",
     "WA_POLICY": "WA",
     "WA_RATES":  "WA",
     "MA":        "MA",
     "MN":        "MN",
+    "MN_NOTIFY": "MN",
     "NJ_RATES":  "NJ",
     "NJ_ACT":    "NJ",
     "NY":        "NY",
     "NY_BUREAU": "NY",
     "MI":        "MI",
+    "MI_COUNTY": "MI",
     "DENVER_CO": "Denver, CO",
     "VA_LEG":    "VA",
     "VA_LABOR":  "VA",
@@ -80,17 +85,20 @@ LOCAL_IDS = {"DENVER_CO"}
 
 JURISDICTIONS = [
     {"id": "CA",        "label": "California (CA)",                  "url": "https://www.dir.ca.gov/Public-Works/PublicWorks.html",                                                                                                    "watch_list": False},
+    {"id": "CA_RATES",  "label": "California — Wage Determinations",  "url": "https://www.dir.ca.gov/OPRL/DPreWageDetermination.htm",                                                                                                    "watch_list": False},
     {"id": "NV_PW",     "label": "Nevada — Prevailing Wage",         "url": "https://labor.nv.gov/PrevailingWage/Public_Works___Prevailing_Wages/",                                                                                    "watch_list": False},
     {"id": "NV_HOME",   "label": "Nevada — Labor Dept",              "url": "https://labor.nv.gov",                                                                                                                                     "watch_list": False},
     {"id": "WA_POLICY", "label": "Washington — PW Policies",         "url": "https://lni.wa.gov/licensing-permits/public-works-projects/prevailing-wage-policies",                                                                     "watch_list": False},
     {"id": "WA_RATES",  "label": "Washington — PW Rates",            "url": "https://www.lni.wa.gov/licensing-permits/public-works-projects/prevailing-wage-rates/",                                                                   "watch_list": False},
     {"id": "MA",        "label": "Massachusetts (MA)",               "url": "https://www.mass.gov/prevailing-wage-program",                                                                                                             "watch_list": False},
     {"id": "MN",        "label": "Minnesota (MN)",                   "url": "https://dli.mn.gov/prevailing-wage",                                                                                                                       "watch_list": False},
+    {"id": "MN_NOTIFY", "label": "Minnesota — PW Notifications",      "url": "https://workplace.doli.state.mn.us/prevwage/notification.php",                                                                                             "watch_list": False},
     {"id": "NJ_RATES",  "label": "New Jersey — PW Rates",            "url": "https://www.nj.gov/labor/wageandhour/prevailing-rates/public-works/index.shtml",                                                                         "watch_list": False},
     {"id": "NJ_ACT",    "label": "New Jersey — PW Act",              "url": "https://www.nj.gov/labor/wageandhour/tools-resources/laws/prevailingwageact.shtml",                                                                       "watch_list": False},
     {"id": "NY",        "label": "New York (NY)",                    "url": "https://apps.labor.ny.gov/wpp/publicViewPWChanges.do?method=showIt#",                                                                                                                      "watch_list": False},
     {"id": "NY_BUREAU", "label": "New York — Bureau of Public Work", "url": "https://dol.ny.gov/bureau-public-work-and-prevailing-wage-enforcement",                                                                                   "watch_list": False},
     {"id": "MI",        "label": "Michigan (MI)",                    "url": "https://www.michigan.gov/leo/bureaus-agencies/ber/wage-and-hour/prevailing-wage",                                                                         "watch_list": False},
+    {"id": "MI_COUNTY", "label": "Michigan — Prevailing Wages by County", "url": "https://www.michigan.gov/leo/bureaus-agencies/ber/wage-and-hour/prevailing-wage/prevailing-wages-by-county",                                           "watch_list": False},
     {"id": "DENVER_CO", "label": "Denver, CO (Local)",               "url": "https://www.denvergov.org/Government/Agencies-Departments-Offices/Agencies-Departments-Offices-Directory/Auditors-Office/Denver-Labor/Prevailing-Wage",   "watch_list": False},
 ]
 
@@ -112,10 +120,10 @@ AGGREGATE_SOURCES = [
     {"id": "NCSL_LABOR", "label": "NCSL — Labor and Employment",       "url": "https://www.ncsl.org/labor-and-employment",                        "watch_list": False},
     {"id": "NCSL_DC",    "label": "NCSL — In DC (Federal Legislation)","url": "https://www.ncsl.org/in-dc",                                       "watch_list": False},
     {"id": "AGC",        "label": "AGC — Prevailing Wage",             "url": "https://news.agc.org/category/news/", "watch_list": False},
-    {"id": "ABC",        "label": "ABC — Prevailing Wage",             "url": "https://www.abc.org/News-Media/News-Releases", "watch_list": False},
+    {"id": "ABC",        "label": "ABC — Prevailing Wage",             "url": "https://www.abc.org/News-Media/Newsline", "watch_list": False},
 ]
 
-ALL_SOURCES = JURISDICTIONS + WATCH_LIST + AGGREGATE_SOURCES  # 28 total
+ALL_SOURCES = JURISDICTIONS + WATCH_LIST + AGGREGATE_SOURCES  # 31 total
 
 
 # ---------------------------------------------------------------------------
