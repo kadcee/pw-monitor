@@ -112,7 +112,7 @@ AGGREGATE_SOURCES = [
     {"id": "NCSL_LABOR", "label": "NCSL — Labor and Employment",       "url": "https://www.ncsl.org/labor-and-employment",                        "watch_list": False},
     {"id": "NCSL_DC",    "label": "NCSL — In DC (Federal Legislation)","url": "https://www.ncsl.org/in-dc",                                       "watch_list": False},
     {"id": "AGC",        "label": "AGC — Prevailing Wage",             "url": "https://news.agc.org/category/news/", "watch_list": False},
-    {"id": "ABC",        "label": "ABC — Prevailing Wage",             "url": "https://www.abc.org/News-Media/Newsline", "watch_list": False},
+    {"id": "ABC",        "label": "ABC — Prevailing Wage",             "url": "https://www.abc.org/News-Media/News-Releases", "watch_list": False},
 ]
 
 ALL_SOURCES = JURISDICTIONS + WATCH_LIST + AGGREGATE_SOURCES  # 28 total
