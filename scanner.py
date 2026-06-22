@@ -93,7 +93,7 @@ JURISDICTIONS = [
 ]
 
 WATCH_LIST = [
-    {"id": "WI_LEG",   "label": "Wisconsin (Legislature)",         "url": "https://legis.wisconsin.gov/",                                                                        "watch_list": True},
+    {"id": "WI_LEG",   "label": "Wisconsin (Legislature)",         "url": "https://legis.wisconsin.gov/today",                                                                   "watch_list": True},
     {"id": "WI_LABOR", "label": "Wisconsin (DWD)",                 "url": "https://dwd.wisconsin.gov/",                                                                          "watch_list": True},
     {"id": "WV_LEG",   "label": "West Virginia (Legislature)",     "url": "https://www.wvlegislature.gov/",                                                                      "watch_list": True},
     {"id": "WV_LABOR", "label": "West Virginia (Labor Dept)",      "url": "https://labor.wv.gov/",                                                                               "watch_list": True},
